@@ -1,0 +1,23 @@
+[
+    {
+        "category": "Resources",
+        "condition_type": "extension",
+        "condition_value": ".pdf",
+        "action": "subfolder",
+        "action_value": "PDFs"
+    },
+    {
+        "category": "Resources",
+        "condition_type": "extension",
+        "condition_value": ".jpg, .png, .gif",
+        "action": "subfolder",
+        "action_value": "Images"
+    },
+    {
+        "category": "Projects",
+        "condition_type": "keyword",
+        "condition_value": "report",
+        "action": "prefix",
+        "action_value": "REPORT_"
+    }
+]
