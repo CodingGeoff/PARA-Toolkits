@@ -44,7 +44,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True, # 使用 UPX 压缩 (如果已安装)
+    upx=False, # 使用 UPX 压缩 (如果已安装)
     upx_exclude=[],
     runtime_tmpdir=None,
     # 控制台和图标设置
