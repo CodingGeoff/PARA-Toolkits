@@ -1,0 +1,21 @@
+2025-06-08 17:56:09 [INFO    ] Logger initialized.
+2025-06-08 17:56:11 [INFO    ] Reloading configuration...
+2025-06-08 17:56:11 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-08 17:56:12 [INFO    ] Application Started.
+2025-06-08 17:56:12 [INFO    ] Rebuilding file index...
+2025-06-08 17:56:15 [INFO    ] Indexing complete. 2925 items indexed.
+2025-06-08 17:57:04 [INFO    ] Logger initialized.
+2025-06-08 17:57:05 [INFO    ] Reloading configuration...
+2025-06-08 17:57:05 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-08 17:57:07 [INFO    ] Application Started.
+2025-06-08 17:57:07 [INFO    ] Rebuilding file index...
+2025-06-08 17:57:11 [INFO    ] Indexing complete. 2925 items indexed.
+2025-06-08 17:57:24 [INFO    ] Destination is empty, performing fast move.
+2025-06-08 17:57:24 [INFO    ] Starting Fast Move of 2 files to F:\para-file\1_Projects
+2025-06-08 17:57:24 [INFO    ] Fast Move complete.
+2025-06-08 17:57:24 [INFO    ] Rebuilding file index...
+2025-06-08 17:57:27 [INFO    ] Indexing complete. 2925 items indexed.
+2025-06-08 17:57:43 [INFO    ] Starting Fast Move of 2 files to F:\para-file\4_Archives
+2025-06-08 17:57:44 [INFO    ] Fast Move complete.
+2025-06-08 17:57:44 [INFO    ] Rebuilding file index...
+2025-06-08 17:57:45 [INFO    ] Indexing complete. 2925 items indexed.
