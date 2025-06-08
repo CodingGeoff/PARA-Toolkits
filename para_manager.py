@@ -18,17 +18,35 @@ from PyQt6.QtWidgets import (
     QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
     QSplitter, QTreeView, QListWidget, QListWidgetItem, QStyle, QMessageBox,
     QMenu, QInputDialog, QStatusBar, QStackedWidget, QTextBrowser, QProgressDialog,
-    QCheckBox
+    QCheckBox, QFileIconProvider
 )
 from PyQt6.QtGui import (
     QFont, QIcon, QAction, QCursor, QFileSystemModel
 )
 from PyQt6.QtCore import (
-    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal
+    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal, QFileInfo
 )
 
-
 # --- UTILITY FUNCTIONS ---
+
+def format_size(size_bytes):
+    """Converts a size in bytes to a human-readable string (B, KB, MB, GB, TB)."""
+    if size_bytes is None or size_bytes < 0:
+        return "N/A"
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
+    if size_kb < 1024:
+        return f"{size_kb:.2f} KB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.2f} MB"
+    size_gb = size_mb / 1024
+    if size_gb < 1024:
+        return f"{size_gb:.2f} GB"
+    size_tb = size_gb / 1024
+    return f"{size_tb:.2f} TB"
+
 def calculate_hash(file_path, block_size=65536):
     """Calculates the SHA256 hash of a file."""
     sha256 = hashlib.sha256()
@@ -317,7 +335,7 @@ class DeduplicationDialog(QDialog):
         
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Action (Check to Delete)", "Source File", "Conflicts With Destination File", "File Size (KB)"])
+        self.table.setHorizontalHeaderLabels(["Action (Check to Delete)", "Source File", "Conflicts With Destination File", "File Size"])
         self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
@@ -344,11 +362,20 @@ class DeduplicationDialog(QDialog):
         for row, (old_path, conflict_path, _) in enumerate(self.duplicates):
             checkbox = QCheckBox(); checkbox.setChecked(True); checkbox.setToolTip("Check this box to delete the source file after processing.")
             cell_widget = QWidget(); cell_layout = QHBoxLayout(cell_widget); cell_layout.addWidget(checkbox); cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter); cell_layout.setContentsMargins(0,0,0,0); self.table.setCellWidget(row, 0, cell_widget)
-            try: old_stat = os.stat(old_path)
-            except FileNotFoundError: continue
+            try:
+                old_stat = os.stat(old_path)
+            except FileNotFoundError:
+                continue
+            
             self.table.setItem(row, 1, QTableWidgetItem(old_path))
             self.table.setItem(row, 2, QTableWidgetItem(conflict_path))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{old_stat.st_size / 1024:.2f}"))
+            
+            # Use the new format_size function here
+            formatted_size = format_size(old_stat.st_size)
+            size_item = QTableWidgetItem(formatted_size)
+            # Align text to the right for better readability
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 3, size_item)
 
     def set_all_checkboxes(self, checked):
         for row in range(self.table.rowCount()):
@@ -480,23 +507,68 @@ class ParaFileManager(QMainWindow):
         self.reload_configuration()
         self.logger.info("Application Started.")
 
+    # In class ParaFileManager
+
+    # In class ParaFileManager
+
     def setup_styles(self):
         self.setStyleSheet("""
-            QMainWindow, QDialog { background-color: #282c34; color: #abb2bf; } QWidget { font-size: 9pt; } QLabel { color: #abb2bf; }
+            /* ---- GENERAL WIDGETS ---- */
+            QWidget { 
+                font-size: 10pt;
+            }
+            QMainWindow, QDialog { background-color: #282c34; color: #abb2bf; }
+            QLabel { color: #abb2bf; }
             QPushButton { background-color: #61afef; color: #282c34; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }
-            QPushButton:hover { background-color: #82c0ff; } QPushButton:pressed { background-color: #5298d8; }
-            QSplitter::handle { background-color: #21252b; width: 3px; } QSplitter::handle:hover { background-color: #61afef; }
-            QTreeView, QListWidget { background-color: #21252b; border-radius: 5px; border: 1px solid #3e4451; color: #abb2bf; font-size: 10pt; }
-            QTreeView::item { padding: 5px; } QTreeView::item:hover { background-color: #3e4451; } QTreeView::item:selected { background-color: #61afef; color: #282c34; }
-            QHeaderView::section { background-color: #2c313a; color: #abb2bf; padding: 5px; border: 1px solid #3e4451;}
-            QListWidget::item { color: #d8dee9; padding: 8px; border-radius: 3px; } QListWidget::item:hover { background-color: #3e4451; } QListWidget::item:selected { background-color: #61afef; color: #282c34; }
-            QStatusBar { color: #98c379; font-weight: bold; }
+            QPushButton:hover { background-color: #82c0ff; }
+            QPushButton:pressed { background-color: #5298d8; }
             QLineEdit { padding: 6px; border-radius: 4px; border: 1px solid #3e4451; background-color: #21252b; color: #d8dee9;}
-            #DropFrame { background-color: #2c313a; border: 2px solid #3e4451; border-radius: 8px; } #DropFrame[dragging="true"] { border: 2px dashed #e5c07b; background-color: #4b5263; }
+            QStatusBar { color: #98c379; font-weight: bold; }
+            QSplitter::handle { background-color: #21252b; width: 3px; }
+            QSplitter::handle:hover { background-color: #61afef; }
+
+            /* ---- VIEWS (Trees, Lists, Tables) ---- */
+            QTreeView, QListWidget, QTableWidget { 
+                background-color: #21252b; 
+                border-radius: 5px; 
+                border: 1px solid #3e4451; 
+                color: #abb2bf; 
+                font-size: 11pt;
+                alternate-background-color: #2c313a;
+            }
+            QHeaderView::section { background-color: #2c313a; color: #abb2bf; padding: 5px; border: 1px solid #3e4451;}
+            
+            /* ---- HOVER and SELECTION STYLES (柔和风格) ---- */
+            QTreeView::item:hover, QListWidget::item:hover { 
+                background-color: #3e4451; 
+            }
+            QTreeView::item:selected, QListWidget::item:selected {
+                background-color: #4b5263; /* 将背景从亮蓝 #61afef 改为柔和灰 */
+                color: #d8dee9;           /* 将文字颜色改为高对比度的亮白 */
+            }
+            
+            /* ---- SEARCH RESULT STYLING ---- */
+            #SearchResultName {
+                font-size: 12pt;
+                font-weight: bold;
+            }
+            #SearchResultPath {
+                font-size: 9pt;
+                color: #82c0ff;
+            }
+            /* 当父项被选中时，专门改变路径的颜色 */
+            QListWidget::item:selected #SearchResultPath {
+                color: #abb2bf; /* 选中时，路径文字也变为柔和的灰色 */
+            }
+            
+            /* ---- OTHER WIDGETS ---- */
+            #DropFrame { background-color: #2c313a; border: 2px solid #3e4451; border-radius: 8px; }
+            #DropFrame[dragging="true"] { border: 2px dashed #e5c07b; background-color: #4b5263; }
             #WelcomeWidget { background-color: #21252b; border-radius: 5px; }
-            QProgressDialog { background-color: #282c34; color: #abb2bf; } QProgressDialog QLabel { color: #abb2bf; }
-            QTextBrowser { background-color: #21252b; color: #abb2bf; border-radius: 4px; border: 1px solid #3e4451; }
-            QTableWidget { background-color: #21252b; color: #abb2bf; border: 1px solid #3e4451; gridline-color: #3e4451; font-size: 9pt; alternate-background-color: #2c313a; }
+            QProgressDialog { background-color: #282c34; color: #abb2bf; }
+            QProgressDialog QLabel { color: #abb2bf; }
+            QTextBrowser { background-color: #21252b; color: #abb2bf; border-radius: 4px; border: 1px solid #3e4451; font-family: Consolas, monospace; }
+            QTableWidget { gridline-color: #3e4451; }
             QTableWidget::item { padding: 5px; border-bottom: 1px solid #3e4451; }
         """)
 
@@ -863,54 +935,117 @@ class ParaFileManager(QMainWindow):
             except Exception: pass
         return "File processing complete."
 
-    def _task_rebuild_file_index(self, progress_callback):
-        self.logger.info("Rebuilding file index...")
-        progress_callback("Indexing files...", 0, 1)
-        self.file_index.clear()
-        if not self.base_dir: return "Index empty: No base directory."
-        
-        all_items = get_all_files_in_paths([self.base_dir])
-        total = len(all_items)
-        # for i, path in enumerate(tqdm(all_items, desc="Indexing", unit="items", leave=False, ncols=80)):
-        # for i, path in enumerate(all_items):
-        #     progress_callback(f"Indexing ({i+1}/{total})", i + 1, total)
-        #     self.file_index.append((os.path.basename(path).lower(), path))
-        
-        # # self.handle_search(self.search_bar.text())
-        # return f"Indexing complete. {len(self.file_index)} items indexed."
-        for i, path in enumerate(all_items):
-        # Only send a progress update every 100 files to avoid flooding the UI thread
-            if (i + 1) % 100 == 0:
-                progress_callback(f"Indexing ({i+1}/{total})", i + 1, total)
-            file_index_data.append((os.path.basename(path).lower(), path))
+    # In class ParaFileManager
 
-        # Ensure the progress bar always finishes at 100%
+    def _task_rebuild_file_index(self, progress_callback):
+        """
+        Walks the base directory to build an index of all files with their metadata.
+        This task runs in a background thread.
+        """
+        self.logger.info("Rebuilding file index...")
+        progress_callback("Preparing to index...", 0, 1)
+        
+        if not self.base_dir:
+            return [] # Return an empty list if no base directory is set
+
+        all_paths = get_all_files_in_paths([self.base_dir])
+        total = len(all_paths)
+        file_index_data = []
+
+        for i, path in enumerate(all_paths):
+            # Update progress periodically to avoid overwhelming the GUI thread
+            if (i + 1) % 100 == 0:
+                progress_callback(f"Indexing: {os.path.basename(path)}", i + 1, total)
+            
+            try:
+                stat = os.stat(path)
+                file_index_data.append({
+                    "path": path,
+                    "name_lower": os.path.basename(path).lower(),
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime, # Last modification time
+                    "ctime": stat.st_ctime  # Creation time (on Windows) or last metadata change (on Unix)
+                })
+            except (FileNotFoundError, PermissionError) as e:
+                self.logger.warn(f"Could not access file during indexing: {path} - {e}")
+                continue
+        
         progress_callback("Finalizing index...", total, total)
+        self.logger.info(f"Indexing complete. Found {len(file_index_data)} items.")
         return file_index_data
+
+    # In class ParaFileManager
 
     def handle_search(self, text):
         term = text.lower().strip()
         if not term:
-            if self.base_dir: self.bottom_pane.setCurrentWidget(self.tree_view)
+            if self.base_dir:
+                self.bottom_pane.setCurrentWidget(self.tree_view)
+            else:
+                self.bottom_pane.setCurrentWidget(self.welcome_widget)
             return
-        
+
         self.bottom_pane.setCurrentWidget(self.search_results_list)
         self.search_results_list.clear()
-        if not self.file_index: return
-        
-        results = [(name, path) for name, path in self.file_index if term in name]
-        for name, path in results:
+
+        if not self.file_index:
+            return
+
+        results = [item for item in self.file_index if term in item["name_lower"]]
+        file_icon_provider = QFileIconProvider()
+
+        for item_data in results:
+            path = item_data["path"]
+            item_widget = QWidget()
+            item_layout = QHBoxLayout(item_widget)
+            item_layout.setContentsMargins(8, 8, 8, 8) # 增加内边距
+            item_layout.setSpacing(12)
+
+            icon = file_icon_provider.icon(QFileInfo(path))
+            icon_label = QLabel()
+            icon_label.setPixmap(icon.pixmap(QSize(32, 32))) # 图标也调大一点
+            
             rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
             if rel_path == '.': rel_path = 'Root'
-            html = f"""<div><span style='font-size: 11pt;'>{os.path.basename(path)}</span><br><span style='font-size: 8pt; color: #82c0ff;'>In: {rel_path}</span></div>"""
-            item = QListWidgetItem()
-            label = QLabel(html)
-            label.setToolTip(path)
-            item.setSizeHint(label.sizeHint())
-            item.setData(Qt.ItemDataRole.UserRole, path)
-            self.search_results_list.addItem(item)
-            self.search_results_list.setItemWidget(item, label)
-    
+            
+            # 使用 ID 选择器代替内联样式
+            # calculate size and mtime strings
+            # render the HTML with the new styles
+            text_html = f"""
+            <div>
+                <span id='SearchResultName'>{os.path.basename(path)}</span>
+                <br>
+                <span id='SearchResultPath'>{rel_path}</span>
+            </div>
+            """
+            info_label = QLabel(text_html)
+            info_label.setWordWrap(True)
+
+            formatted_size = format_size(item_data['size'])
+            mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+            
+            # 增大元数据字体，并移除颜色硬编码
+            meta_html = f"""
+            <div style='text-align: right; font-size: 9pt;'>
+                {formatted_size} <br>
+                <span style='color: #98c379;'>Modified: {mtime_str}</span>
+            </div>
+            """
+            meta_label = QLabel(meta_html)
+            meta_label.setFixedWidth(160) # 稍微加宽以适应更大的字体
+            meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+            item_layout.addWidget(icon_label)
+            item_layout.addWidget(info_label, 1)
+            item_layout.addWidget(meta_label)
+
+            list_item = QListWidgetItem(self.search_results_list)
+            list_item.setData(Qt.ItemDataRole.UserRole, path)
+            list_item.setSizeHint(item_widget.sizeHint())
+            
+            self.search_results_list.addItem(list_item)
+            self.search_results_list.setItemWidget(list_item, item_widget)
+            
     def get_category_from_path(self, path):
         if not self.base_dir: return None
         norm_path = os.path.normpath(path)
@@ -1041,3 +1176,24 @@ if __name__ == "__main__":
                 traceback.print_exc(file=f)
         except:
             pass
+        
+
+# # --- 文件夹模式 (推荐用于调试) ---
+# coll = COLLECT(
+#     exe,
+#     a.zipfiles,
+#     a.datas,
+#     strip=False,
+#     upx=True,
+#     upx_exclude=[],
+#     name='ParaManager',
+# )
+
+# --- 单文件模式 (用于最终发布) ---
+# 如果要使用单文件模式，请取消下面的注释，并注释掉上面的 coll 块
+# coll = BUNDLE(
+#     exe,
+#     name='ParaFileManagerEVO.exe',
+#     icon='icon.ico',
+#     bundle_identifier=None,
+# )

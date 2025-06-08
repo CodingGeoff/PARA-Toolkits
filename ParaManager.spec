@@ -20,7 +20,6 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
     # --- 关键选项 ---
     # 'bundle' 模式表示程序是独立的。
     # 'no-console' 在 Windows 上等同于 --windowed
@@ -41,7 +40,7 @@ exe = EXE(
     a.binaries,
     a.datas, # 确保 datas 在这里被引用
     [],
-    name='ParaFileManagerEVO',
+    name='ParaManager',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -62,22 +61,9 @@ exe = EXE(
 # 如果你想要文件夹打包 (one-folder)，使用 coll。
 # 文件夹模式更容易调试。建议先用文件夹模式，成功后再换成单文件模式。
 
-# --- 文件夹模式 (推荐用于调试) ---
-coll = COLLECT(
+coll = BUNDLE(
     exe,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='ParaManager',
+    name='ParaManager.exe',
+    icon='icon.ico',
+    bundle_identifier=None,
 )
-
-# --- 单文件模式 (用于最终发布) ---
-# 如果要使用单文件模式，请取消下面的注释，并注释掉上面的 coll 块
-# coll = BUNDLE(
-#     exe,
-#     name='ParaFileManagerEVO.exe',
-#     icon='icon.ico',
-#     bundle_identifier=None,
-# )
