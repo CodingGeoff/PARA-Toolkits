@@ -2,13 +2,6 @@
     {
         "category": "Resources",
         "condition_type": "extension",
-        "condition_value": ".pdf",
-        "action": "subfolder",
-        "action_value": "PDFs"
-    },
-    {
-        "category": "Resources",
-        "condition_type": "extension",
         "condition_value": ".jpg, .png, .gif",
         "action": "subfolder",
         "action_value": "Images"
