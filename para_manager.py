@@ -18,14 +18,76 @@ from PyQt6.QtWidgets import (
     QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
     QSplitter, QTreeView, QListWidget, QListWidgetItem, QStyle, QMessageBox,
     QMenu, QInputDialog, QStatusBar, QStackedWidget, QTextBrowser, QProgressDialog,
-    QCheckBox, QFileIconProvider
+    QCheckBox, QFileIconProvider, QGridLayout
 )
 from PyQt6.QtGui import (
-    QFont, QIcon, QAction, QCursor, QFileSystemModel
+    QFont, QIcon, QAction, QCursor, QFileSystemModel, QPainter, QPixmap, QColor, QPalette
 )
 from PyQt6.QtCore import (
-    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal, QFileInfo
+    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal, QFileInfo, QTimer
 )
+
+
+
+# --- ADD THIS NEW FUNCTION NEAR THE TOP OF YOUR SCRIPT ---
+
+#--- REPLACE your existing global_exception_hook function with this one ---
+
+def global_exception_hook(exctype, value, tb, window=None):
+    """
+    A global hook to catch ALL unhandled exceptions.
+    This version creates a wider, styled error dialog.
+    """
+    # Format the traceback
+    traceback_details = "".join(traceback.format_exception(exctype, value, tb))
+    error_message_for_details = (
+        "An unexpected error has occurred, and the application needs to close.\n\n"
+        "Please provide the following details to the developer.\n\n"
+        f"Error Type: {exctype.__name__}\n"
+        f"Error Message: {value}\n\n"
+        f"Traceback:\n{traceback_details}"
+    )
+    
+    # Log the fatal error
+    try:
+        main_logger.error("A fatal, unhandled exception occurred:\n" + traceback_details)
+    except (NameError, AttributeError):
+        pass
+
+    try:
+        with open("crash_report.log", "a", encoding="utf-8") as f:
+            f.write(f"\n--- FATAL CRASH AT {datetime.now()} ---\n{traceback_details}")
+    except Exception as e:
+        print(f"Could not write to crash_report.log: {e}")
+
+    # Ensure a QApplication instance exists
+    app = QApplication.instance() or QApplication(sys.argv)
+    
+    # Create and style the message box
+    error_box = QMessageBox()
+    error_box.setIcon(QMessageBox.Icon.Critical)
+    error_box.setWindowTitle("Application Error")
+    error_box.setText("A critical error occurred and the application must close.")
+    error_box.setInformativeText(
+        "The error has been logged to 'crash_report.log'.\n"
+        "Please click 'Show Details' to copy the error information."
+    )
+    error_box.setDetailedText(error_message_for_details)
+    
+    # --- UI ENHANCEMENTS ---
+    error_box.setMinimumSize(700, 250) # Set a wider and taller minimum size
+    if window:
+        error_box.setStyleSheet(window.styleSheet()) # Apply the main window's theme
+
+    # Improve the detailed text area font
+    text_edit = error_box.findChild(QTextBrowser)
+    if text_edit:
+        text_edit.setFont(QFont("Consolas", 10))
+
+    error_box.exec()
+    
+    sys.exit(1)
+    
 
 # --- UTILITY FUNCTIONS ---
 
@@ -150,46 +212,155 @@ class Logger:
         return "\n".join(logs)
 
 
-# --- UI DIALOGS ---
-class PreOperationDialog(QDialog):
-    """Informs the user why a complex operation is needed and offers choices."""
-    def __init__(self, dest_folder_name, parent=None):
+# --- UI DIALOGS ----
+
+# --- REPLACE THE EXISTING FolderDropDialog CLASS WITH THIS ONE ---
+# --- ADD THIS ENTIRE NEW CLASS to your script ---
+# You can place it with your other dialog classes.
+
+class IconPickerDialog(QDialog):
+    """A dialog that displays a grid of selectable QStyle standard icons."""
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Action Required")
+        self.setWindowTitle("Choose a Built-in Icon")
+        self.setMinimumSize(600, 400)
+        self.selected_icon_name = None
+
+        layout = QVBoxLayout(self)
+        
+        self.icon_list_widget = QListWidget()
+        self.icon_list_widget.setViewMode(QListWidget.ViewMode.IconMode) # Grid view
+        self.icon_list_widget.setIconSize(QSize(48, 48))
+        self.icon_list_widget.setGridSize(QSize(80, 80))
+        self.icon_list_widget.setSpacing(10)
+        self.icon_list_widget.setMovement(QListWidget.Movement.Static)
+        self.icon_list_widget.itemDoubleClicked.connect(self.accept)
+        
+        layout.addWidget(self.icon_list_widget)
+
+        # --- Populate with a curated list of good icons ---
+        self.populate_icons()
+
+        # --- OK and Cancel buttons ---
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+    
+    #--- REPLACE the populate_icons method in the IconPickerDialog class ---
+
+    def populate_icons(self):
+        """
+        Populates the list with ALL available standard icons from QStyle,
+        filtering out any that are null or cannot be rendered.
+        """
+        style = self.style()
+        self.icon_list_widget.clear() # Clear any previous items
+
+        # Iterate through every member of the QStyle.StandardPixmap enum
+        for enum_member in QStyle.StandardPixmap:
+            # Important Check: Some enums might not have a valid icon in the current
+            # OS style. We check if the icon is null to avoid showing blank squares.
+            icon = style.standardIcon(enum_member)
+            if not icon.isNull():
+                icon_name = enum_member.name  # e.g., "SP_DirIcon"
+                
+                # Create the list item with the icon and its identifier name
+                item = QListWidgetItem(icon, icon_name)
+                item.setData(Qt.ItemDataRole.UserRole, icon_name) # Store the name for retrieval
+                item.setToolTip(icon_name) # Show the name on hover
+                self.icon_list_widget.addItem(item)
+
+    # def populate_icons(self):
+    #     style = self.style()
+    #     # A curated list of useful and distinct standard icons
+    #     icon_enums = [
+    #         QStyle.StandardPixmap.SP_DirIcon, QStyle.StandardPixmap.SP_FileIcon,
+    #         QStyle.StandardPixmap.SP_FileDialogNewFolder, QStyle.StandardPixmap.SP_DirOpenIcon,
+    #         QStyle.StandardPixmap.SP_DriveHDIcon, QStyle.StandardPixmap.SP_DriveNetIcon,
+    #         QStyle.StandardPixmap.SP_ComputerIcon, QStyle.StandardPixmap.SP_DesktopIcon,
+    #         QStyle.StandardPixmap.SP_DirHomeIcon, QStyle.StandardPixmap.SP_TrashIcon,
+    #         QStyle.StandardPixmap.SP_DialogSaveButton, QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton,
+    #         QStyle.StandardPixmap.SP_MessageBoxInformation, QStyle.StandardPixmap.SP_MessageBoxWarning,
+    #         QStyle.StandardPixmap.SP_MessageBoxCritical, QStyle.StandardPixmap.SP_DialogHelpButton,
+    #         QStyle.StandardPixmap.SP_ArrowUp, QStyle.StandardPixmap.SP_ArrowDown,
+    #         QStyle.StandardPixmap.SP_ArrowLeft, QStyle.StandardPixmap.SP_ArrowRight,
+    #         QStyle.StandardPixmap.SP_CommandLink, QStyle.StandardPixmap.SP_MediaPlay,
+    #     ]
+        
+    #     for enum in icon_enums:
+    #         icon_name = enum.name # e.g., "SP_DirIcon"
+    #         item = QListWidgetItem(style.standardIcon(enum), icon_name)
+    #         item.setData(Qt.ItemDataRole.UserRole, icon_name) # Store the name
+    #         self.icon_list_widget.addItem(item)
+            
+    def accept(self):
+        """Overrides accept to store the selected icon's name."""
+        selected_items = self.icon_list_widget.selectedItems()
+        if selected_items:
+            self.selected_icon_name = selected_items[0].data(Qt.ItemDataRole.UserRole)
+        super().accept()
+        
+class FolderDropDialog(QDialog):
+    """Asks the user how to handle dropped folders."""
+    def __init__(self, folder_count, file_count, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Folder Drop Options")
         self.setStyleSheet(parent.styleSheet())
+        self.setMinimumWidth(850)  # <-- Set a wider minimum width
         self.result = "cancel"
 
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-        title_label = QLabel("Destination Not Empty")
+        title_label = QLabel("Folders Detected")
         title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        info_text = f"""<p>The destination folder '<b>{dest_folder_name}</b>' already contains files.</p><p>To avoid creating duplicates, please choose how you'd like to proceed.</p>"""
+        
+        info_text = (f"<p>You have dropped <b>{folder_count} folder(s)</b> and <b>{file_count} file(s)</b>.</p>"
+                     f"<p>Please choose how to handle the folders.</p>")
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
 
         layout.addWidget(title_label)
         layout.addWidget(info_label)
 
+        # --- MODIFIED BUTTON LAYOUT ---
+        # All buttons are now in a single QHBoxLayout
         button_layout = QHBoxLayout()
-        self.scan_button = self._create_option_button(
-            "Smart Scan (Recommended)",
-            "Scans file content to prevent adding identical files. Slower but safer.",
-            "scan",
+        
+        # Action buttons
+        self.as_is_button = self._create_option_button(
+            "Move Folders As-Is (Recommended)",
+            "Moves the entire folder(s) into the destination, preserving their structure.",
+            "move_as_is",
+            QStyle.StandardPixmap.SP_DirLinkIcon
+        )
+        self.merge_button = self._create_option_button(
+            "Merge Folder Contents",
+            "Moves only the files *inside* the dropped folder(s), discarding the folder structure.",
+            "merge",
             QStyle.StandardPixmap.SP_FileDialogDetailedView
         )
-        self.skip_button = self._create_option_button(
-            "Move All (Fast)",
-            "Moves all files, automatically renaming any with the same name. Much faster.",
-            "skip",
-            QStyle.StandardPixmap.SP_ArrowRight
-        )
         
-        button_layout.addWidget(self.scan_button)
-        button_layout.addWidget(self.skip_button)
+        button_layout.addWidget(self.as_is_button)
+        button_layout.addWidget(self.merge_button)
+        
+        # Spacer to push the cancel button to the right
+        # button_layout.addStretch() 
+        
+        # Cancel button
+        cancel_button = QPushButton("Cancel Operation")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+
         layout.addLayout(button_layout)
+        # --- END OF MODIFICATION ---
 
     def _create_option_button(self, title, description, result_val, icon):
         button = QPushButton(f" {title}")
@@ -201,6 +372,45 @@ class PreOperationDialog(QDialog):
     def set_result_and_accept(self, result_val):
         self.result = result_val
         self.accept()
+        
+
+
+class AboutDialog(QDialog):
+    """A dialog to display the application's version and release notes."""
+    def __init__(self, version, notes_markdown, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About")
+        self.setMinimumSize(700, 550)
+        self.setStyleSheet(parent.styleSheet())
+
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel(f"Latest version")
+        title_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        version_label = QLabel(f"Version {version}")
+        version_label.setFont(QFont("Segoe UI", 12))
+        version_label.setStyleSheet("color: #98c379;") # Use a highlight color
+        layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addSpacing(15)
+
+        notes_browser = QTextBrowser()
+        # QTextBrowser can render Markdown directly
+        notes_browser.setMarkdown(notes_markdown)
+        notes_browser.setOpenExternalLinks(True) # For any future links
+        layout.addWidget(notes_browser)
+        
+        layout.addSpacing(10)
+
+        # close_button = QPushButton("Close")
+        # close_button.clicked.connect(self.accept)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        # button_layout.addWidget(close_button)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
 
 class HashingSelectionDialog(QDialog):
     """Dialog for users to select files/folders for deduplication, with robust checkbox logic."""
@@ -265,8 +475,7 @@ class HashingSelectionDialog(QDialog):
         self.model.dataChanged.emit(root_index, root_index, [])
         self.tree.viewport().update()
     
-    # in class ParaFileManager
-# ... (把它放在其他 on_... 函数附近)
+    
 
     # def on_index_rebuilt(self, index_data):
     #     """这个槽函数在主线程中运行，用于接收索引结果并更新UI。"""
@@ -388,54 +597,319 @@ class DeduplicationDialog(QDialog):
             checkbox = self.table.cellWidget(row, 0).findChild(QCheckBox)
             choices[old_path] = "delete" if checkbox.isChecked() else "keep"
         return choices
-
+   
     def show_context_menu(self, pos):
-        item = self.table.itemAt(pos)
-        if not item or item.column() not in [1, 2]: return
-        path = self.table.item(item.row(), item.column()).text()
+        index = self.tree_view.indexAt(pos)
+        if not index.isValid(): return
+        
+        path = self.file_system_model.filePath(index)
         menu = QMenu()
-        action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer")
-        if menu.exec(self.table.mapToGlobal(pos)) == action:
-            try:
-                if sys.platform == "win32": subprocess.run(['explorer', '/select,', os.path.normpath(path)])
-                else: subprocess.run(['open', '-R', os.path.normpath(path)])
-            except Exception as e: self.parent().logger.error(f"Failed to show in explorer: {path}", exc_info=True)
+        style = self.style()
+
+        # Determine the target directory for new items
+        if os.path.isdir(path):
+            target_dir = path
+        else:
+            target_dir = os.path.dirname(path)
+            
+        # --- NEW "CREATE" ACTIONS ---
+        new_menu = QMenu("New", menu)
+        new_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        
+        folder_action = new_menu.addAction("Folder...")
+        folder_action.triggered.connect(lambda: self.create_new_folder(target_dir))
+        
+        file_action = new_menu.addAction("File...")
+        file_action.triggered.connect(lambda: self.create_new_file(target_dir))
+        
+        menu.addMenu(new_menu)
+        menu.addSeparator()
+        # --- END OF NEW "CREATE" ACTIONS ---
+
+        current_category = self.get_category_from_path(path)
+        if current_category:
+            move_menu = QMenu("Move To...", menu)
+            move_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+            
+            icons = {
+                "Projects": self.drop_frames["Projects"].findChild(QLabel).pixmap(),
+                "Areas": self.drop_frames["Areas"].findChild(QLabel).pixmap(),
+                "Resources": self.drop_frames["Resources"].findChild(QLabel).pixmap(),
+                "Archives": self.drop_frames["Archives"].findChild(QLabel).pixmap(),
+            }
+
+            for cat_name in self.para_folders.keys():
+                action = QAction(QIcon(icons.get(cat_name)), cat_name, self)
+                if cat_name == current_category:
+                    action.setEnabled(False)
+                    action.setToolTip(f"Item is already in {cat_name}")
+                else:
+                    action.triggered.connect(lambda checked, p=path, cat=cat_name: self.handle_move_to_category(p, cat))
+                move_menu.addAction(action)
+
+            menu.addMenu(move_menu)
+            menu.addSeparator()
+
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "Open", lambda: self.open_item(path))
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer", lambda: self.show_in_explorer(path))
+        menu.addSeparator()
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Rename...", lambda: self.rename_item(index))
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), "Delete...", lambda: self.delete_item(index))
+        
+        menu.exec(self.tree_view.viewport().mapToGlobal(pos))
 
 class LogViewerDialog(QDialog):
+    # def __init__(self, logger, parent=None):
+    #     super().__init__(parent); self.logger = logger; self.setWindowTitle("Log Viewer"); self.setMinimumSize(900, 700); self.setStyleSheet(parent.styleSheet())
+    #     layout = QVBoxLayout(self); controls_layout = QHBoxLayout(); self.date_combo = QComboBox(); controls_layout.addWidget(QLabel("Select Date:")); controls_layout.addWidget(self.date_combo); controls_layout.addStretch(); layout.addLayout(controls_layout)
+    #     self.log_display = QTextBrowser(); self.log_display.setFont(QFont("Consolas", 10)); layout.addWidget(self.log_display)
+    #     self.date_combo.currentIndexChanged.connect(self.load_log_for_date); self.populate_dates()
+    
+    # --- In the LogViewerDialog class, REPLACE the __init__ method ---
+
     def __init__(self, logger, parent=None):
-        super().__init__(parent); self.logger = logger; self.setWindowTitle("Log Viewer"); self.setMinimumSize(900, 700); self.setStyleSheet(parent.styleSheet())
-        layout = QVBoxLayout(self); controls_layout = QHBoxLayout(); self.date_combo = QComboBox(); controls_layout.addWidget(QLabel("Select Date:")); controls_layout.addWidget(self.date_combo); controls_layout.addStretch(); layout.addLayout(controls_layout)
-        self.log_display = QTextBrowser(); self.log_display.setFont(QFont("Consolas", 10)); layout.addWidget(self.log_display)
-        self.date_combo.currentIndexChanged.connect(self.load_log_for_date); self.populate_dates()
+        super().__init__(parent)
+        self.logger = logger
+        self.setWindowTitle("Log Viewer")
+        self.setMinimumSize(900, 700)
+        self.setStyleSheet(parent.styleSheet())
+        
+        layout = QVBoxLayout(self)
+        controls_layout = QHBoxLayout()
+        self.date_combo = QComboBox()
+        controls_layout.addWidget(QLabel("Select Date:"))
+        controls_layout.addWidget(self.date_combo)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
+        
+        self.log_display = QTextBrowser()
+        self.log_display.setFont(QFont("Consolas", 10))
+        
+        # --- THIS IS THE FIX ---
+        # Get the widget's color palette
+        palette = self.log_display.palette()
+        # Set the 'Base' color role (the background for text-entry areas)
+        # to our application's dark background color.
+        palette.setColor(QPalette.ColorRole.Base, QColor("#21252b"))
+        # Apply the new palette to the widget
+        self.log_display.setPalette(palette)
+        # --- END OF FIX ---
+
+        layout.addWidget(self.log_display)
+        
+        self.date_combo.currentIndexChanged.connect(self.load_log_for_date)
+        self.populate_dates()
     def populate_dates(self): self.date_combo.clear(); self.date_combo.addItems(self.logger.get_log_dates())
+    
+    # def load_log_for_date(self):
+    #     date_str = self.date_combo.currentText()
+    #     if not date_str: return
+    #     logs = self.logger.get_logs_for_date(date_str); html = ""
+    #     for line in logs.split('\n'):
+    #         line = line.replace("<", "&lt;").replace(">", "&gt;"); color = "#abb2bf"
+    #         if "[ERROR" in line: color = "#e06c75"
+    #         elif "[WARNING" in line: color = "#d19a66"
+    #         elif "[INFO" in line: color = "#98c379"
+    #         html += f'<pre style="margin: 0; padding: 0; white-space: pre-wrap; color: {color};">{line}</pre>'
+    #     self.log_display.setHtml(html)
+    
+    
+    # --- In the LogViewerDialog class, REPLACE the load_log_for_date method ---
+
     def load_log_for_date(self):
         date_str = self.date_combo.currentText()
-        if not date_str: return
-        logs = self.logger.get_logs_for_date(date_str); html = ""
+        if not date_str:
+            self.log_display.setHtml("")
+            return
+
+        logs = self.logger.get_logs_for_date(date_str)
+        
+        # This color palette no longer needs the background color
+        color_timestamp = "#6c7380"
+        color_default = "#abb2bf"
+        color_info = "#63a37b"
+        color_warn = "#cda152"
+        color_error = "#b85c5c"
+        
+        html_lines = []
         for line in logs.split('\n'):
-            line = line.replace("<", "&lt;").replace(">", "&gt;"); color = "#abb2bf"
-            if "[ERROR" in line: color = "#e06c75"
-            elif "[WARNING" in line: color = "#d19a66"
-            elif "[INFO" in line: color = "#98c379"
-            html += f'<pre style="margin: 0; padding: 0; white-space: pre-wrap; color: {color};">{line}</pre>'
-        self.log_display.setHtml(html)
+            line = line.replace("<", "&lt;").replace(">", "&gt;")
+            
+            main_color = color_default
+            if "[ERROR" in line: main_color = color_error
+            elif "[WARNING" in line: main_color = color_warn
+            elif "[INFO" in line: main_color = color_info
+
+            # The <pre> style is now simpler
+            pre_style = 'style="margin: 0; padding: 2px 5px; white-space: pre-wrap;"'
+
+            if len(line) > 23 and line[19] == ' ' and '[' in line[20:29]:
+                timestamp = line[:19]
+                message = line[19:]
+                html_line = (
+                    f'<pre {pre_style}>'
+                    f'<span style="color: {color_timestamp};">{timestamp}</span>'
+                    f'<span style="color: {main_color};">{message}</span>'
+                    f'</pre>'
+                )
+                html_lines.append(html_line)
+            else:
+                html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
+
+        self.log_display.setHtml("".join(html_lines))
+        
+# class SettingsDialog(QDialog):
+#     def __init__(self, parent=None):
+#         super().__init__(parent); self.setWindowTitle("Settings & Rules"); self.setMinimumSize(800, 600); self.setStyleSheet(parent.styleSheet())
+#         layout = QVBoxLayout(self); config_group = QFrame(self); config_group.setLayout(QVBoxLayout()); config_label = QLabel("PARA Base Directory"); config_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.path_edit = QLineEdit(); browse_button = QPushButton("Browse..."); browse_button.clicked.connect(self.browse_directory); path_layout = QHBoxLayout(); path_layout.addWidget(self.path_edit); path_layout.addWidget(browse_button); config_group.layout().addWidget(config_label); config_group.layout().addLayout(path_layout); layout.addWidget(config_group)
+#         rules_group = QFrame(self); rules_group.setLayout(QVBoxLayout()); rules_label = QLabel("Custom Automation Rules"); rules_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.rules_table = QTableWidget(); self.setup_rules_table(); rules_buttons_layout = QHBoxLayout(); add_rule_button = QPushButton("Add Rule"); add_rule_button.clicked.connect(self.add_rule); remove_rule_button = QPushButton("Remove Selected Rule"); remove_rule_button.clicked.connect(self.remove_rule); rules_buttons_layout.addStretch(); rules_buttons_layout.addWidget(add_rule_button); rules_buttons_layout.addWidget(remove_rule_button); rules_group.layout().addWidget(rules_label); rules_group.layout().addWidget(self.rules_table); rules_group.layout().addLayout(rules_buttons_layout); layout.addWidget(rules_group)
+#         dialog_buttons_layout = QHBoxLayout(); dialog_buttons_layout.addStretch(); cancel_button = QPushButton("Cancel"); cancel_button.clicked.connect(self.reject); save_button = QPushButton("Save & Close"); save_button.setDefault(True); save_button.clicked.connect(self.save_and_accept); dialog_buttons_layout.addWidget(cancel_button); dialog_buttons_layout.addWidget(save_button); layout.addLayout(dialog_buttons_layout)
+#         self.load_settings()
+#     def setup_rules_table(self): self.rules_table.setColumnCount(5); self.rules_table.setHorizontalHeaderLabels(["Category", "Condition Type", "Condition Value", "Action", "Action Value"]); self.rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+#     def load_settings(self):
+#         try:
+#             with open(resource_path("config.json"), "r") as f: self.path_edit.setText(json.load(f).get("base_directory", ""))
+#         except (FileNotFoundError, json.JSONDecodeError): self.path_edit.setText("")
+#         try:
+#             with open(resource_path("rules.json"), "r") as f: rules = json.load(f); self.rules_table.setRowCount(len(rules));
+#             for i, rule in enumerate(rules): self.add_rule_to_table(i, rule)
+#         except (FileNotFoundError, json.JSONDecodeError): self.rules_table.setRowCount(0)
+#     def add_rule_to_table(self, row, rule_data=None):
+#         categories = ["Projects", "Areas", "Resources", "Archives"]; condition_types = ["extension", "keyword"]; actions = ["subfolder", "prefix"]; cat_combo = QComboBox(); cat_combo.addItems(categories); cond_combo = QComboBox(); cond_combo.addItems(condition_types); act_combo = QComboBox(); act_combo.addItems(actions)
+#         if rule_data: cat_combo.setCurrentText(rule_data.get("category")); cond_combo.setCurrentText(rule_data.get("condition_type")); act_combo.setCurrentText(rule_data.get("action"))
+#         self.rules_table.setCellWidget(row, 0, cat_combo); self.rules_table.setCellWidget(row, 1, cond_combo); self.rules_table.setCellWidget(row, 3, act_combo); self.rules_table.setItem(row, 2, QTableWidgetItem(rule_data.get("condition_value", "") if rule_data else "")); self.rules_table.setItem(row, 4, QTableWidgetItem(rule_data.get("action_value", "") if rule_data else ""))
+#     def add_rule(self): row_count = self.rules_table.rowCount(); self.rules_table.insertRow(row_count); self.add_rule_to_table(row_count, None)
+#     def remove_rule(self):
+#         if (current_row := self.rules_table.currentRow()) >= 0: self.rules_table.removeRow(current_row)
+#     def browse_directory(self):
+#         if (directory := QFileDialog.getExistingDirectory(self, "Select PARA Base Directory")): self.path_edit.setText(directory)
+#     def save_and_accept(self):
+#         try:
+#             with open(resource_path("config.json"), "r") as f_read: config = json.load(f_read)
+#         except (FileNotFoundError, json.JSONDecodeError): config = {}
+#         config["base_directory"] = self.path_edit.text()
+#         with open(resource_path("config.json"), "w") as f: json.dump(config, f, indent=4)
+#         rules_data = []
+#         for i in range(self.rules_table.rowCount()):
+#             cond_item = self.rules_table.item(i, 2); act_item = self.rules_table.item(i, 4)
+#             rules_data.append({"category": self.rules_table.cellWidget(i, 0).currentText(), "condition_type": self.rules_table.cellWidget(i, 1).currentText(), "condition_value": cond_item.text() if cond_item else "", "action": self.rules_table.cellWidget(i, 3).currentText(), "action_value": act_item.text() if act_item else ""})
+#         with open(resource_path("rules.json"), "w") as f: json.dump(rules_data, f, indent=4)
+#         self.accept()
+
+#--- REPLACE the entire SettingsDialog class with this one ---
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent); self.setWindowTitle("Settings & Rules"); self.setMinimumSize(800, 600); self.setStyleSheet(parent.styleSheet())
-        layout = QVBoxLayout(self); config_group = QFrame(self); config_group.setLayout(QVBoxLayout()); config_label = QLabel("PARA Base Directory"); config_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.path_edit = QLineEdit(); browse_button = QPushButton("Browse..."); browse_button.clicked.connect(self.browse_directory); path_layout = QHBoxLayout(); path_layout.addWidget(self.path_edit); path_layout.addWidget(browse_button); config_group.layout().addWidget(config_label); config_group.layout().addLayout(path_layout); layout.addWidget(config_group)
-        rules_group = QFrame(self); rules_group.setLayout(QVBoxLayout()); rules_label = QLabel("Custom Automation Rules"); rules_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.rules_table = QTableWidget(); self.setup_rules_table(); rules_buttons_layout = QHBoxLayout(); add_rule_button = QPushButton("Add Rule"); add_rule_button.clicked.connect(self.add_rule); remove_rule_button = QPushButton("Remove Selected Rule"); remove_rule_button.clicked.connect(self.remove_rule); rules_buttons_layout.addStretch(); rules_buttons_layout.addWidget(add_rule_button); rules_buttons_layout.addWidget(remove_rule_button); rules_group.layout().addWidget(rules_label); rules_group.layout().addWidget(self.rules_table); rules_group.layout().addLayout(rules_buttons_layout); layout.addWidget(rules_group)
-        dialog_buttons_layout = QHBoxLayout(); dialog_buttons_layout.addStretch(); cancel_button = QPushButton("Cancel"); cancel_button.clicked.connect(self.reject); save_button = QPushButton("Save & Close"); save_button.setDefault(True); save_button.clicked.connect(self.save_and_accept); dialog_buttons_layout.addWidget(cancel_button); dialog_buttons_layout.addWidget(save_button); layout.addLayout(dialog_buttons_layout)
+    def __init__(self, current_icons, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings & Rules")
+        self.setMinimumSize(800, 700)
+        self.setStyleSheet(parent.styleSheet())
+        
+        self.current_icons = current_icons # Store the app's current icons
+        self.custom_icon_paths = {} # Holds paths OR built-in identifiers
+        self.icon_previews = {}
+
+        main_layout = QVBoxLayout(self)
+        
+        # --- Base Directory Group (Unchanged) ---
+        config_group = QFrame(self); config_group.setLayout(QVBoxLayout()); config_label = QLabel("PARA Base Directory"); config_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.path_edit = QLineEdit(); browse_button = QPushButton("Browse..."); browse_button.clicked.connect(self.browse_directory); path_layout = QHBoxLayout(); path_layout.addWidget(self.path_edit); path_layout.addWidget(browse_button); config_group.layout().addWidget(config_label); config_group.layout().addLayout(path_layout); main_layout.addWidget(config_group)
+
+        # --- Custom Icons Group (Modified) ---
+        icons_group = QFrame(self); icons_group.setLayout(QVBoxLayout()); icons_label = QLabel("Custom Category Icons"); icons_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); icons_group.layout().addWidget(icons_label)
+        icons_grid = QGridLayout(); icons_grid.setColumnStretch(1, 1)
+        
+        para_categories = ["Projects", "Areas", "Resources", "Archives"]
+        for i, category in enumerate(para_categories):
+            self.icon_previews[category] = QLabel(); self.icon_previews[category].setFixedSize(32, 32); self.icon_previews[category].setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Button to choose from a local file
+            change_local_button = QPushButton("From File...")
+            change_local_button.clicked.connect(partial(self.browse_for_icon, category))
+            
+            # NEW: Button to choose from built-in gallery
+            change_builtin_button = QPushButton("Choose Built-in...")
+            change_builtin_button.clicked.connect(partial(self.choose_builtin_icon, category))
+
+            icons_grid.addWidget(QLabel(f"{category} Icon:"), i, 0)
+            icons_grid.addWidget(self.icon_previews[category], i, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            icons_grid.addWidget(change_builtin_button, i, 2)
+            icons_grid.addWidget(change_local_button, i, 3)
+            
+        icons_group.layout().addLayout(icons_grid)
+        main_layout.addWidget(icons_group)
+
+        # --- Automation Rules & Dialog Buttons (Unchanged) ---
+        rules_group = QFrame(self); rules_group.setLayout(QVBoxLayout()); rules_label = QLabel("Custom Automation Rules"); rules_label.setFont(QFont("Arial", 12, QFont.Weight.Bold)); self.rules_table = QTableWidget(); self.setup_rules_table(); rules_buttons_layout = QHBoxLayout(); add_rule_button = QPushButton("Add Rule"); add_rule_button.clicked.connect(self.add_rule); remove_rule_button = QPushButton("Remove Selected Rule"); remove_rule_button.clicked.connect(self.remove_rule); rules_buttons_layout.addStretch(); rules_buttons_layout.addWidget(add_rule_button); rules_buttons_layout.addWidget(remove_rule_button); rules_group.layout().addWidget(rules_label); rules_group.layout().addWidget(self.rules_table); rules_group.layout().addLayout(rules_buttons_layout); main_layout.addWidget(rules_group)
+        dialog_buttons_layout = QHBoxLayout(); dialog_buttons_layout.addStretch(); cancel_button = QPushButton("Cancel"); cancel_button.clicked.connect(self.reject); save_button = QPushButton("Save & Close"); save_button.setDefault(True); save_button.clicked.connect(self.save_and_accept); dialog_buttons_layout.addWidget(cancel_button); dialog_buttons_layout.addWidget(save_button); main_layout.addLayout(dialog_buttons_layout)
+        
         self.load_settings()
-    def setup_rules_table(self): self.rules_table.setColumnCount(5); self.rules_table.setHorizontalHeaderLabels(["Category", "Condition Type", "Condition Value", "Action", "Action Value"]); self.rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+    def choose_builtin_icon(self, category):
+        """Opens the IconPickerDialog to select a built-in icon."""
+        picker = IconPickerDialog(self)
+        if picker.exec() and picker.selected_icon_name:
+            self.custom_icon_paths[category] = picker.selected_icon_name
+            self._update_icon_previews()
+
+    def _update_icon_previews(self):
+        """Refreshes previews. Now handles paths, built-ins, and defaults."""
+        style = self.style()
+        for category, label in self.icon_previews.items():
+            value = self.custom_icon_paths.get(category)
+            pixmap = None
+            if value:
+                if value.startswith("SP_"): # It's a built-in icon identifier
+                    try:
+                        enum = getattr(QStyle.StandardPixmap, value)
+                        pixmap = style.standardIcon(enum).pixmap(32, 32)
+                    except AttributeError:
+                        pixmap = None # Invalid identifier
+                elif os.path.exists(value): # It's a file path
+                    pixmap = QPixmap(value)
+
+            if pixmap and not pixmap.isNull():
+                label.setPixmap(pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                # This fixes the bug: Show the app's current default icon
+                label.setPixmap(self.current_icons[category].pixmap(32, 32))
+    
+    def browse_for_icon(self, category):
+        file_path, _ = QFileDialog.getOpenFileName(self, f"Select Icon for {category}", "", "Image Files (*.png *.ico *.jpg *.jpeg)")
+        if file_path:
+            self.custom_icon_paths[category] = file_path
+            self._update_icon_previews()
+
     def load_settings(self):
         try:
-            with open(resource_path("config.json"), "r") as f: self.path_edit.setText(json.load(f).get("base_directory", ""))
-        except (FileNotFoundError, json.JSONDecodeError): self.path_edit.setText("")
+            with open(resource_path("config.json"), "r") as f:
+                config = json.load(f)
+            self.path_edit.setText(config.get("base_directory", ""))
+            self.custom_icon_paths = config.get("custom_icons", {})
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.path_edit.setText("")
+            self.custom_icon_paths = {}
+        
+        self._update_icon_previews() # Update UI after loading
+            
         try:
             with open(resource_path("rules.json"), "r") as f: rules = json.load(f); self.rules_table.setRowCount(len(rules));
             for i, rule in enumerate(rules): self.add_rule_to_table(i, rule)
         except (FileNotFoundError, json.JSONDecodeError): self.rules_table.setRowCount(0)
+    
+    # --- Other methods are unchanged from your last full version ---
+    def setup_rules_table(self): self.rules_table.setColumnCount(5); self.rules_table.setHorizontalHeaderLabels(["Category", "Condition Type", "Condition Value", "Action", "Action Value"]); self.rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    def save_and_accept(self):
+        try:
+            with open(resource_path("config.json"), "r") as f_read: config = json.load(f_read)
+        except (FileNotFoundError, json.JSONDecodeError): config = {}
+        config["base_directory"] = self.path_edit.text(); config["custom_icons"] = self.custom_icon_paths
+        with open(resource_path("config.json"), "w") as f: json.dump(config, f, indent=4)
+        rules_data = []
+        for i in range(self.rules_table.rowCount()):
+            cond_item = self.rules_table.item(i, 2); act_item = self.rules_table.item(i, 4)
+            rules_data.append({"category": self.rules_table.cellWidget(i, 0).currentText(), "condition_type": self.rules_table.cellWidget(i, 1).currentText(), "condition_value": cond_item.text() if cond_item else "", "action": self.rules_table.cellWidget(i, 3).currentText(), "action_value": act_item.text() if act_item else ""})
+        with open(resource_path("rules.json"), "w") as f: json.dump(rules_data, f, indent=4)
+        self.accept()
     def add_rule_to_table(self, row, rule_data=None):
         categories = ["Projects", "Areas", "Resources", "Archives"]; condition_types = ["extension", "keyword"]; actions = ["subfolder", "prefix"]; cat_combo = QComboBox(); cat_combo.addItems(categories); cond_combo = QComboBox(); cond_combo.addItems(condition_types); act_combo = QComboBox(); act_combo.addItems(actions)
         if rule_data: cat_combo.setCurrentText(rule_data.get("category")); cond_combo.setCurrentText(rule_data.get("condition_type")); act_combo.setCurrentText(rule_data.get("action"))
@@ -445,19 +919,7 @@ class SettingsDialog(QDialog):
         if (current_row := self.rules_table.currentRow()) >= 0: self.rules_table.removeRow(current_row)
     def browse_directory(self):
         if (directory := QFileDialog.getExistingDirectory(self, "Select PARA Base Directory")): self.path_edit.setText(directory)
-    def save_and_accept(self):
-        try:
-            with open(resource_path("config.json"), "r") as f_read: config = json.load(f_read)
-        except (FileNotFoundError, json.JSONDecodeError): config = {}
-        config["base_directory"] = self.path_edit.text()
-        with open(resource_path("config.json"), "w") as f: json.dump(config, f, indent=4)
-        rules_data = []
-        for i in range(self.rules_table.rowCount()):
-            cond_item = self.rules_table.item(i, 2); act_item = self.rules_table.item(i, 4)
-            rules_data.append({"category": self.rules_table.cellWidget(i, 0).currentText(), "condition_type": self.rules_table.cellWidget(i, 1).currentText(), "condition_value": cond_item.text() if cond_item else "", "action": self.rules_table.cellWidget(i, 3).currentText(), "action_value": act_item.text() if act_item else ""})
-        with open(resource_path("rules.json"), "w") as f: json.dump(rules_data, f, indent=4)
-        self.accept()
-
+            
 class DropFrame(QFrame):
     def __init__(self, category_name, icon, main_window):
         super().__init__(); self.category_name = category_name; self.main_window = main_window; self.setAcceptDrops(True); self.setProperty("category", category_name)
@@ -487,7 +949,98 @@ class DropTreeView(QTreeView):
             self.main_window.process_dropped_items(files, category_name)
         self.main_window.reset_drop_frame_styles(); event.acceptProposedAction()
 
+# --- ADD THIS NEW CLASS DEFINITION ---
+# Place it right after the DropTreeView class definition.
+#--- REPLACE the entire ThemedTreeView class with this corrected version ---
 
+# class ThemedTreeView(DropTreeView):
+#     """A QTreeView that can paint a large, faint icon in its background."""
+#     def __init__(self, main_window):
+#         super().__init__(main_window)
+#         # Renamed for clarity: this now correctly holds a QIcon
+#         self.background_icon = None
+
+#     def setBackgroundIcon(self, icon):
+#         """Sets the QIcon to be drawn in the background and triggers a repaint."""
+#         self.background_icon = icon
+#         self.viewport().update() # Crucial: tells the widget to repaint itself
+
+#     def paintEvent(self, event):
+#         """
+#         Overrides the paint event. First, it draws our custom background,
+#         then it calls the original paintEvent to draw the file tree on top.
+#         """
+#         if self.background_icon:
+#             # --- FIX IS HERE ---
+#             # 1. Request a large QPixmap from the QIcon container
+#             # We ask for a 256x256 image; the QIcon will provide the best fit.
+#             pixmap_to_draw = self.background_icon.pixmap(QSize(256, 256))
+
+#             # 2. Check if a valid pixmap was returned before proceeding
+#             if not pixmap_to_draw.isNull():
+#                 painter = QPainter(self.viewport())
+#                 painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                
+#                 painter.setOpacity(0.08) 
+
+#                 view_rect = self.viewport().rect()
+                
+#                 # Scale the pixmap to be large but fit within the view's width
+#                 scaled_pixmap = pixmap_to_draw.scaled(
+#                     view_rect.width(), view_rect.height(),
+#                     Qt.AspectRatioMode.KeepAspectRatio,
+#                     Qt.TransformationMode.SmoothTransformation
+#                 )
+                
+#                 # Center the scaled pixmap
+#                 x = (view_rect.width() - scaled_pixmap.width()) / 2
+#                 y = (view_rect.height() - scaled_pixmap.height()) / 2
+                
+#                 painter.drawPixmap(int(x), int(y), scaled_pixmap)
+#                 painter.end()
+
+#         # VERY IMPORTANT: Call the original paint event to draw the actual tree
+#         super().paintEvent(event)
+
+
+# --- ADD THIS NEW CLASS DEFINITION ---
+
+class ThemedTreeView(DropTreeView):
+    """A QTreeView that can paint large, faint text in its background."""
+    def __init__(self, main_window):
+        super().__init__(main_window)
+        self.background_text = ""
+
+    def setBackgroundText(self, text):
+        """Sets the text to be drawn in the background and triggers a repaint."""
+        if self.background_text != text:
+            self.background_text = text
+            self.viewport().update() # Repaint only if text changes
+
+    def paintEvent(self, event):
+        """
+        Overrides the paint event to draw the background text before drawing the tree.
+        """
+        # First, call the original paint event so the default background is drawn
+        super().paintEvent(event)
+
+        if self.background_text:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+            # Configure a very large, bold font
+            font = QFont("Segoe UI", 120, QFont.Weight.ExtraBold)
+            painter.setFont(font)
+
+            # Set a very faint color for the text (light grey with low opacity)
+            # The low alpha (15) is what makes it "faint"
+            painter.setPen(QColor(200, 200, 200, 15))
+
+            # Draw the text centered in the view
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.background_text)
+            
+            painter.end()
+        
 # --- MAIN APPLICATION WINDOW ---
 class ParaFileManager(QMainWindow):
     def __init__(self, logger):
@@ -495,21 +1048,39 @@ class ParaFileManager(QMainWindow):
         self.logger = logger
         self.setWindowTitle("PARA File Manager EVO")
         self.setGeometry(100, 100, 1400, 900)
+        self.APP_VERSION = "1.2.0"
         self.base_dir = None
         self.para_folders = {"Projects": "1_Projects", "Areas": "2_Areas", "Resources": "3_Resources", "Archives": "4_Archives"}
+        
+        # --- ADD THIS LINE ---
+        self.folder_to_category = {v: k for k, v in self.para_folders.items()}
+        self.para_category_icons = {} 
+        
         self.rules = []
         self.file_index = []
         self.worker = None
         self.progress = None
+        
+        
+        # --- ADD THESE FOR PAGINATION ---
+        self.RESULTS_PER_PAGE = 50 # Show 50 results per page
+        self.current_search_results = []
+        self.current_search_page = 0
+        # --- END ADD ---
+        
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.perform_search)
+        
         self.setup_styles()
         self.setAcceptDrops(True)
         self.init_ui()
         self.reload_configuration()
         self.logger.info("Application Started.")
 
-    # In class ParaFileManager
+    
 
-    # In class ParaFileManager
+    # --- REPLACE your existing setup_styles method with this one ---
 
     def setup_styles(self):
         self.setStyleSheet("""
@@ -522,7 +1093,24 @@ class ParaFileManager(QMainWindow):
             QPushButton { background-color: #61afef; color: #282c34; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }
             QPushButton:hover { background-color: #82c0ff; }
             QPushButton:pressed { background-color: #5298d8; }
-            QLineEdit { padding: 6px; border-radius: 4px; border: 1px solid #3e4451; background-color: #21252b; color: #d8dee9;}
+            
+            /* --- MODIFIED QLineEdit STYLING --- */
+            QLineEdit { 
+                padding: 6px; 
+                border-radius: 4px; 
+                border: 1px solid #3e4451; 
+                background-color: #21252b; 
+                color: #d8dee9;
+                /* Add a smooth transition effect */
+                transition: border 0.2s ease-in-out, background-color 0.2s ease-in-out;
+            }
+            /* This is the new "click effect" */
+            QLineEdit:focus {
+                background-color: #2c313a; /* Slightly lighter background when active */
+                border: 1px solid #61afef; /* Highlights with the app's primary blue color */
+            }
+            /* --- END OF MODIFICATION --- */
+
             QStatusBar { color: #98c379; font-weight: bold; }
             QSplitter::handle { background-color: #21252b; width: 3px; }
             QSplitter::handle:hover { background-color: #61afef; }
@@ -538,13 +1126,18 @@ class ParaFileManager(QMainWindow):
             }
             QHeaderView::section { background-color: #2c313a; color: #abb2bf; padding: 5px; border: 1px solid #3e4451;}
             
+            #--- In your setup_styles method, find the QTreeView::item:selected rule ---
+
             /* ---- HOVER and SELECTION STYLES (柔和风格) ---- */
             QTreeView::item:hover, QListWidget::item:hover { 
                 background-color: #3e4451; 
             }
             QTreeView::item:selected, QListWidget::item:selected {
-                background-color: #4b5263; /* 将背景从亮蓝 #61afef 改为柔和灰 */
-                color: #d8dee9;           /* 将文字颜色改为高对比度的亮白 */
+                /* --- THIS IS THE CHANGE --- */
+                /* OLD: background-color: #4b5263; */
+                /* NEW: Using rgba to make it 75% opaque */
+                background-color: rgba(75, 82, 99, 0.75);
+                color: #d8dee9;
             }
             
             /* ---- SEARCH RESULT STYLING ---- */
@@ -586,14 +1179,30 @@ class ParaFileManager(QMainWindow):
         v_splitter.addWidget(self._create_bottom_pane())
         v_splitter.setSizes([180, 720])
 
+    # In class ParaFileManager, update this method
     def _create_top_bar(self):
         top_bar_layout = QHBoxLayout()
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("Search all files and folders...")
-        self.search_bar.textChanged.connect(self.handle_search)
+        self.search_bar.setMinimumWidth(450)
+        # self.search_bar.textChanged.connect(self.handle_search)
+        
+        self.search_bar.textChanged.connect(self.on_search_text_changed) # <-- CHANGE THIS
         top_bar_layout.addWidget(self.search_bar)
         
+        top_bar_layout.addWidget(self.search_bar)
+        
+        top_bar_layout.addStretch(1)
+        
         style = self.style()
+        
+        # --- START OF ADDED CODE ---
+        about_button = QPushButton()
+        about_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        about_button.setToolTip("About this application")
+        about_button.clicked.connect(self.open_about_dialog)
+        # --- END OF ADDED CODE ---
+
         settings_button = QPushButton()
         settings_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
         settings_button.setToolTip("Open Settings")
@@ -604,10 +1213,10 @@ class ParaFileManager(QMainWindow):
         log_button.setToolTip("View Logs")
         log_button.clicked.connect(self.open_log_viewer)
 
+        top_bar_layout.addWidget(about_button) # <-- ADD THIS LINE
         top_bar_layout.addWidget(settings_button)
         top_bar_layout.addWidget(log_button)
         return top_bar_layout
-
     def _create_drop_frames(self):
         top_pane_widget = QWidget()
         top_pane_layout = QHBoxLayout(top_pane_widget)
@@ -619,20 +1228,77 @@ class ParaFileManager(QMainWindow):
             "Resources": DropFrame("Resources", style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), self),
             "Archives": DropFrame("Archives", style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), self)
         }
-        for frame in self.drop_frames.values():
+        # for frame in self.drop_frames.values():
+        #     frame.setObjectName("DropFrame")
+        #     top_pane_layout.addWidget(frame)
+        for name, frame in self.drop_frames.items():
+            layout = QVBoxLayout(frame)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_label = QLabel()
+            # Increase the size here for a more prominent look
+            icon = frame.findChild(QLabel).pixmap().scaled(QSize(64, 64), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            icon_label.setPixmap(icon) # Use the icon from the frame's property
+            # Store the large icon for background use
+            self.para_category_icons[name] = icon_label.pixmap()
+            
+            layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
+            title_label = QLabel(name)
+            title_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+            layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
             frame.setObjectName("DropFrame")
             top_pane_layout.addWidget(frame)
+
         return top_pane_widget
+
+    # --- REPLACE your _create_bottom_pane method with this one ---
 
     def _create_bottom_pane(self):
         self.bottom_pane = QStackedWidget()
         self.welcome_widget = self._create_welcome_widget()
         self.tree_view = self._create_tree_view()
+        
+        # --- Create the Search Page Widget ---
+        search_page_widget = QWidget()
+        search_layout = QVBoxLayout(search_page_widget)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(5)
+
         self.search_results_list = QListWidget()
         self.search_results_list.itemDoubleClicked.connect(self.open_selected_item)
+        # Add the context menu to the search results list
+        self.search_results_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.search_results_list.customContextMenuRequested.connect(self.show_search_result_context_menu)
+        
+        # --- Pagination Controls ---
+        pagination_controls = QWidget()
+        controls_layout = QHBoxLayout(pagination_controls)
+        controls_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.prev_page_button = QPushButton("  Previous")
+        self.prev_page_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
+        self.prev_page_button.clicked.connect(self.go_to_previous_page)
+        
+        self.next_page_button = QPushButton("Next  ")
+        self.next_page_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.next_page_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.next_page_button.clicked.connect(self.go_to_next_page)
+
+        self.page_status_label = QLabel("Page 1 of 1")
+        self.page_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        controls_layout.addWidget(self.prev_page_button)
+        controls_layout.addStretch()
+        controls_layout.addWidget(self.page_status_label)
+        controls_layout.addStretch()
+        controls_layout.addWidget(self.next_page_button)
+        
+        search_layout.addWidget(self.search_results_list)
+        search_layout.addWidget(pagination_controls)
+        # --- End of Search Page Widget ---
+        
         self.bottom_pane.addWidget(self.welcome_widget)
         self.bottom_pane.addWidget(self.tree_view)
-        self.bottom_pane.addWidget(self.search_results_list)
+        self.bottom_pane.addWidget(search_page_widget) # Add the new composite widget
         return self.bottom_pane
     
     def _create_welcome_widget(self):
@@ -652,16 +1318,152 @@ class ParaFileManager(QMainWindow):
         layout.addSpacing(20)
         layout.addWidget(open_settings_button, alignment=Qt.AlignmentFlag.AlignCenter)
         return widget
+# --- REPLACE your _create_tree_view method with this one ---
+    # def _create_tree_view(self):
+    #     # Use our new ThemedTreeView class
+    #     tree_view = ThemedTreeView(self)
+    #     self.file_system_model = QFileSystemModel()
+    #     self.file_system_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.AllEntries)
+    #     tree_view.setModel(self.file_system_model)
+    #     tree_view.setSortingEnabled(True)
+    #     tree_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        
+    #     # Connect the clicked signal to update the background
+    #     tree_view.clicked.connect(self.on_tree_item_clicked)
+        
+    #     return tree_view
+    
+    
+    #--- REPLACE your _create_tree_view method with this one ---
 
     def _create_tree_view(self):
+        # Use our new ThemedTreeView class
+        tree_view = ThemedTreeView(self)
         self.file_system_model = QFileSystemModel()
         self.file_system_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.AllEntries)
-        tree_view = DropTreeView(self)
         tree_view.setModel(self.file_system_model)
         tree_view.setSortingEnabled(True)
         tree_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        
+        # Connect the clicked signal to update the background text
+        tree_view.clicked.connect(self.on_tree_item_clicked)
+        
         return tree_view
+    
+    # # --- ADD THIS NEW HELPER METHOD TO THE ParaFileManager CLASS ---
 
+    # def _build_context_menu(self, path):
+    #     """Builds a context menu for a given file/folder path."""
+    #     menu = QMenu()
+    #     if not path or not os.path.exists(path):
+    #         return menu # Return an empty menu if path is invalid
+
+    #     style = self.style()
+        
+    #     # Determine the target directory for new items
+    #     target_dir = path if os.path.isdir(path) else os.path.dirname(path)
+            
+    #     # "New" Submenu
+    #     new_menu = QMenu("New", menu)
+    #     new_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+    #     folder_action = new_menu.addAction("Folder..."); folder_action.triggered.connect(lambda: self.create_new_folder(target_dir))
+    #     file_action = new_menu.addAction("File..."); file_action.triggered.connect(lambda: self.create_new_file(target_dir))
+    #     menu.addMenu(new_menu)
+    #     menu.addSeparator()
+
+    #     # "Move To..." Submenu
+    #     current_category = self.get_category_from_path(path)
+    #     if current_category:
+    #         move_menu = QMenu("Move To...", menu)
+    #         move_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+    #         icons = {name: frame.findChild(QLabel).pixmap() for name, frame in self.drop_frames.items()}
+    #         for cat_name in self.para_folders.keys():
+    #             action = QAction(QIcon(icons.get(cat_name)), cat_name, self)
+    #             if cat_name == current_category:
+    #                 action.setEnabled(False); action.setToolTip(f"Item is already in {cat_name}")
+    #             else:
+    #                 action.triggered.connect(lambda checked, p=path, cat=cat_name: self.handle_move_to_category(p, cat))
+    #             move_menu.addAction(action)
+    #         menu.addMenu(move_menu)
+    #         menu.addSeparator()
+
+    #     # Standard Actions
+    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "Open", lambda: self.open_item(path))
+    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer", lambda: self.show_in_explorer(path))
+    #     menu.addSeparator()
+        
+    #     # Get QModelIndex for rename/delete if possible (for tree view)
+    #     index = self.file_system_model.index(path)
+    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Rename...", lambda: self.rename_item(index))
+    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), "Delete...", lambda: self.delete_item(index))
+        
+    #     return menu
+    
+    # --- REPLACE your _build_context_menu method with this one ---
+
+    def _build_context_menu(self, path):
+        """Builds a context menu for a given file/folder path."""
+        menu = QMenu()
+        if not path or not os.path.exists(path):
+            return menu
+
+        style = self.style()
+        
+        # --- NEW "COPY PATH" ACTION ---
+        def copy_path_to_clipboard():
+            QApplication.clipboard().setText(os.path.normpath(path))
+            self.log_and_show(f"Path copied: {os.path.normpath(path)}", "info", 2000)
+
+        copy_action = QAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Copy File Path", menu)
+        copy_action.triggered.connect(copy_path_to_clipboard)
+        # --- END NEW ACTION ---
+
+        # Determine the target directory for new items
+        target_dir = path if os.path.isdir(path) else os.path.dirname(path)
+            
+        # "New" Submenu
+        new_menu = QMenu("New", menu)
+        new_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
+        folder_action = new_menu.addAction("Folder..."); folder_action.triggered.connect(lambda: self.create_new_folder(target_dir))
+        file_action = new_menu.addAction("File..."); file_action.triggered.connect(lambda: self.create_new_file(target_dir))
+        menu.addMenu(new_menu)
+        menu.addSeparator()
+
+        # "Move To..." Submenu
+        current_category = self.get_category_from_path(path)
+        if current_category:
+            move_menu = QMenu("Move To...", menu)
+            move_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+            # icons = {name: frame.findChild(QLabel).pixmap() for name, frame in self.drop_frames.items()}
+            
+            icons = self.para_category_icons
+        
+            for cat_name in self.para_folders.keys():
+                action = QAction(icons.get(cat_name), cat_name, self) # Use the QIcon directly
+            
+            
+            # for cat_name in self.para_folders.keys():
+            #     action = QAction(QIcon(icons.get(cat_name)), cat_name, self)
+                if cat_name == current_category:
+                    action.setEnabled(False); action.setToolTip(f"Item is already in {cat_name}")
+                else:
+                    action.triggered.connect(lambda checked, p=path, cat=cat_name: self.handle_move_to_category(p, cat))
+                move_menu.addAction(action)
+            menu.addMenu(move_menu)
+            menu.addSeparator()
+
+        # Standard Actions
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "Open", lambda: self.open_item(path))
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer", lambda: self.show_in_explorer(path))
+        menu.addAction(copy_action) # <-- Add the new copy action here
+        menu.addSeparator()
+        
+        index = self.file_system_model.index(path)
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Rename...", lambda: self.rename_item(index))
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), "Delete...", lambda: self.delete_item(index))
+        
+        return menu
+        
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -723,20 +1525,82 @@ class ParaFileManager(QMainWindow):
         if self.progress and self.progress.isVisible():
             self.progress.setValue(self.progress.maximum())
         # We don't show "Task Finished" here anymore, as specific callbacks handle it.
+    
+    # --- ADD this new method to the ParaFileManager class ---
+    #--- In the ParaFileManager class, REPLACE the on_tree_item_clicked method ---
 
+    # def on_tree_item_clicked(self, index):
+    #     """When an item is clicked, update the tree view's background icon."""
+    #     path = self.file_system_model.filePath(index)
+    #     category = self.get_category_from_path(path)
+        
+    #     if category and category in self.para_category_icons:
+    #         # A PARA category was clicked, set its icon as the background
+    #         # Use the new, clearer method name: setBackgroundIcon
+    #         self.tree_view.setBackgroundIcon(self.para_category_icons[category])
+    #     else:
+    #         # Not in a PARA category, clear the background
+    #         self.tree_view.setBackgroundIcon(None)
+    
+    
+    
+    #--- ADD this method back to the ParaFileManager class ---
+
+    def on_tree_item_clicked(self, index):
+        """When an item is clicked, update the tree view's background text."""
+        path = self.file_system_model.filePath(index)
+        category = self.get_category_from_path(path)
+        
+        if category:
+            # A PARA category was clicked, set its name as the background text
+            self.tree_view.setBackgroundText(category.upper())
+        else:
+            # Not in a PARA category, clear the background text
+            self.tree_view.setBackgroundText("")
+            
+            
+    # def on_tree_item_clicked(self, index):
+    #     """When an item is clicked, update the tree view's background icon."""
+    #     path = self.file_system_model.filePath(index)
+    #     category = self.get_category_from_path(path)
+        
+    #     if category and category in self.para_category_icons:
+    #         # A PARA category was clicked, set its icon as the background
+    #         self.tree_view.setBackgroundPixmap(self.para_category_icons[category])
+    #     else:
+    #         # Not in a PARA category, clear the background
+    #         self.tree_view.setBackgroundPixmap(None)
+            
     # --- Core Logic with New Transparent Workflow ---
     def reload_configuration(self):
         self.log_and_show("Reloading configuration...", "info", 2000)
         try:
+            # with open(resource_path("config.json"), "r") as f:
+            #     config = json.load(f)
+            #     path = config.get("base_directory")
+            # if not path:
+            #     raise ValueError("Base directory not set in config.")
+            # self.base_dir = os.path.normpath(path)
+            # os.makedirs(self.base_dir, exist_ok=True)
+            # with open(resource_path("rules.json"), "r") as f:
+            #     self.rules = json.load(f)
+
             with open(resource_path("config.json"), "r") as f:
                 config = json.load(f)
-                path = config.get("base_directory")
+            
+            path = config.get("base_directory")
             if not path:
                 raise ValueError("Base directory not set in config.")
             self.base_dir = os.path.normpath(path)
             os.makedirs(self.base_dir, exist_ok=True)
+            
+            # Load custom icons paths here
+            custom_icons = config.get("custom_icons", {})
+            self._load_para_icons(custom_icons)
+            
             with open(resource_path("rules.json"), "r") as f:
                 self.rules = json.load(f)
+                
         except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
             self.log_and_show(f"Configuration incomplete. Please set a valid base directory.", "warn")
             self.logger.warn(f"Config load error: {e}")
@@ -749,7 +1613,16 @@ class ParaFileManager(QMainWindow):
             self.bottom_pane.setCurrentWidget(self.welcome_widget)
             return
         
+        for name, frame in self.drop_frames.items():
+            icon_label = frame.findChild(QLabel)
+            if icon_label:
+                # Get the loaded icon (custom or default) and set it
+                pixmap = self.para_category_icons[name].pixmap(QSize(64, 64))
+                icon_label.setPixmap(pixmap)
+
         self.bottom_pane.setCurrentWidget(self.tree_view)
+        
+        # self.bottom_pane.setCurrentWidget(self.tree_view)
         self.file_system_model.setRootPath(self.base_dir)
         self.tree_view.setRootIndex(self.file_system_model.index(self.base_dir))
         for i in range(1, self.file_system_model.columnCount()):
@@ -760,14 +1633,39 @@ class ParaFileManager(QMainWindow):
         self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
         
     
+    #--- REPLACE THE EXISTING process_dropped_items FUNCTION WITH THIS ONE ---
+
     def process_dropped_items(self, dropped_paths, category_name):
         if not self.base_dir:
             self.log_and_show("Please set a base directory first.", "warn")
             return
-        
+
         dest_root = os.path.join(self.base_dir, self.para_folders[category_name])
         os.makedirs(dest_root, exist_ok=True)
-        
+
+        # --- NEW LOGIC: Determine how to handle folders ---
+        folder_handling_mode = "merge" # Default behavior
+        dropped_folders = [p for p in dropped_paths if os.path.isdir(p)]
+        dropped_files = [p for p in dropped_paths if os.path.isfile(p)]
+
+        if dropped_folders:
+            dialog = FolderDropDialog(len(dropped_folders), len(dropped_files), self)
+            if not dialog.exec():
+                self.log_and_show("Operation cancelled.", "warn")
+                return
+            folder_handling_mode = dialog.result
+
+        # --- PATH 1: User chose "Move Folders As-Is" ---
+        if folder_handling_mode == "move_as_is":
+            self.log_and_show("Moving files and folders as-is...", "info")
+            self.run_task(self._task_process_hybrid_drop, on_success=self.on_final_refresh_finished,
+                          dropped_paths=dropped_paths, # Pass the original list
+                          dest_root=dest_root,
+                          category_name=category_name)
+            return
+
+        # --- PATH 2: User chose "Merge" or only dropped files (Original Logic) ---
+        # If we reach here, we are flattening all folders and processing only files.
         if os.listdir(dest_root):
             dialog = PreOperationDialog(self.para_folders[category_name], self)
             if not dialog.exec():
@@ -788,7 +1686,8 @@ class ParaFileManager(QMainWindow):
                 self.run_task(self._task_scan_for_duplicates, on_success=on_scan_completed_with_context,
                               source_paths=dropped_paths, files_to_hash_dest=files_to_hash_dest)
         else:
-            self.log_and_show("Destination is empty, performing fast move.", "info")
+            # Destination is empty, fast merge/move
+            self.log_and_show("Destination is empty, performing fast merge of contents.", "info")
             self.run_task(self._task_process_simple_drop, on_success=self.on_final_refresh_finished,
                           dropped_paths=dropped_paths, dest_root=dest_root, category_name=category_name)
     
@@ -819,12 +1718,14 @@ class ParaFileManager(QMainWindow):
         self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
         # self.run_task(self._task_rebuild_file_index, on_success=lambda r: self.log_and_show(r, "info", 2000))
     
+    #--- REPLACE your on_index_rebuilt method with this one ---
+
     def on_index_rebuilt(self, index_data):
         """This slot runs in the main thread to receive index results and update the UI."""
         self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
         self.file_index = index_data
-        # Now it's safe to call handle_search to refresh the UI
-        self.handle_search(self.search_bar.text())
+        # Now it's safe to call perform_search to refresh the UI
+        self.perform_search()
     # --- Background Tasks (Workers) ---
     def _task_scan_for_duplicates(self, progress_callback, source_paths, files_to_hash_dest):
         source_files = get_all_files_in_paths(source_paths)
@@ -889,11 +1790,25 @@ class ParaFileManager(QMainWindow):
             try: os.makedirs(os.path.dirname(new_path), exist_ok=True); shutil.move(old_path, new_path)
             except Exception as e: self.logger.error(f"Failed to move {old_path}", exc_info=True)
         
+        # source_dirs = {os.path.dirname(p) for p in all_source_files}
+        # for folder in source_dirs:
+        #     try:
+        #         if not os.listdir(folder): shutil.rmtree(folder)
+        #     except Exception: pass
+        self.logger.info("Cleaning up empty source directories...")
+        protected_paths = {os.path.normpath(os.path.join(self.base_dir, d)) for d in self.para_folders.values()}
         source_dirs = {os.path.dirname(p) for p in all_source_files}
-        for folder in source_dirs:
+        
+        for folder in sorted(source_dirs, key=len, reverse=True): # Process deeper folders first
             try:
-                if not os.listdir(folder): shutil.rmtree(folder)
-            except Exception: pass
+                # Protect the main PARA folders from being deleted
+                if os.path.normpath(folder) in protected_paths:
+                    continue
+                if not os.listdir(folder):
+                    self.logger.info(f"Removing empty source directory: {folder}")
+                    shutil.rmtree(folder)
+            except Exception as e:
+                self.logger.warn(f"Could not remove source directory {folder}: {e}")
         return "Fast Move complete."
 
     def _task_process_final_drop(self, progress_callback, dropped_paths, dest_root, choices, category_name):
@@ -928,11 +1843,27 @@ class ParaFileManager(QMainWindow):
             try: os.makedirs(os.path.dirname(new_path), exist_ok=True); shutil.move(old_path, new_path)
             except Exception as e: self.logger.error(f"Failed to move {old_path}", exc_info=True)
         
-        source_dirs = {p for p in get_all_files_in_paths(dropped_paths) if os.path.isdir(p)} # Needs re-evaluation
-        for folder in source_dirs:
+        # source_dirs = {p for p in get_all_files_in_paths(dropped_paths) if os.path.isdir(p)} # Needs re-evaluation
+        # for folder in source_dirs:
+        #     try:
+        #         if not os.listdir(folder): shutil.rmtree(folder)
+        #     except Exception: pass
+        self.logger.info("Cleaning up empty source directories...")
+        protected_paths = {os.path.normpath(os.path.join(self.base_dir, d)) for d in self.para_folders.values()}
+        
+        # We only care about the source directories of files that were actually moved (not deleted)
+        moved_paths = [p for p in dropped_paths if choices.get(p) != "delete"]
+        source_dirs = {os.path.dirname(p) for p in moved_paths}
+
+        for folder in sorted(source_dirs, key=len, reverse=True):
             try:
-                if not os.listdir(folder): shutil.rmtree(folder)
-            except Exception: pass
+                if os.path.normpath(folder) in protected_paths:
+                    continue
+                if not os.listdir(folder):
+                    self.logger.info(f"Removing empty source directory: {folder}")
+                    shutil.rmtree(folder)
+            except Exception as e:
+                self.logger.warn(f"Could not remove source directory {folder}: {e}")
         return "File processing complete."
 
     # In class ParaFileManager
@@ -973,78 +1904,360 @@ class ParaFileManager(QMainWindow):
         progress_callback("Finalizing index...", total, total)
         self.logger.info(f"Indexing complete. Found {len(file_index_data)} items.")
         return file_index_data
+    
+    # --- ADD THIS NEW TASK FUNCTION TO THE ParaFileManager CLASS ---
+    # Place it with the other _task_... methods.
 
-    # In class ParaFileManager
+    def _task_move_item(self, progress_callback, source_path, destination_dir):
+        """
+        Moves a single file or folder to a new destination directory.
+        Handles name conflicts by appending a suffix.
+        """
+        if not os.path.exists(source_path):
+            self.logger.error(f"Move failed: Source path no longer exists: {source_path}")
+            return f"Error: Source item not found."
 
-    def handle_search(self, text):
-        term = text.lower().strip()
-        if not term:
-            if self.base_dir:
-                self.bottom_pane.setCurrentWidget(self.tree_view)
-            else:
-                self.bottom_pane.setCurrentWidget(self.welcome_widget)
-            return
+        base_name = os.path.basename(source_path)
+        dest_path = os.path.join(destination_dir, base_name)
+        
+        progress_callback(f"Preparing to move {base_name}...", 0, 100)
 
-        self.bottom_pane.setCurrentWidget(self.search_results_list)
+        # Handle potential name conflicts
+        if os.path.exists(dest_path):
+            base, ext = os.path.splitext(base_name)
+            counter = 1
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(destination_dir, f"{base}_conflict_{counter}{ext}")
+                counter += 1
+            new_base_name = os.path.basename(dest_path)
+            self.logger.warn(f"Name conflict: '{base_name}' will be moved as '{new_base_name}'")
+
+        try:
+            progress_callback(f"Moving {base_name}...", 50, 100)
+            shutil.move(source_path, dest_path)
+            self.logger.info(f"Successfully moved '{source_path}' to '{dest_path}'")
+            progress_callback("Move complete.", 100, 100)
+            
+            source_dir = os.path.dirname(source_path)
+            protected_paths = {os.path.normpath(os.path.join(self.base_dir, d)) for d in self.para_folders.values()}
+            try:
+                if os.path.normpath(source_dir) not in protected_paths and not os.listdir(source_dir):
+                    self.logger.info(f"Cleaning up empty source directory from internal move: {source_dir}")
+                    shutil.rmtree(source_dir)
+            except Exception as e:
+                 self.logger.warn(f"Could not remove source directory {source_dir}: {e}")
+                 
+            return f"Moved '{base_name}' successfully."
+        except Exception as e:
+            self.logger.error(f"Failed to move '{source_path}' to '{dest_path}': {e}", exc_info=True)
+            return f"Error moving {base_name}."
+    # --- REPLACE your old 'handle_search' method with these TWO new methods ---
+
+    def on_search_text_changed(self):
+        """Restarts the debounce timer every time the user types."""
+        self.search_timer.start(300)  # Wait 300ms after last keystroke
+    
+    
+    # --- REPLACE the _load_para_icons method ---
+
+    def _load_para_icons(self, custom_icon_paths):
+        """Loads icons from paths or built-in identifiers, with fallbacks."""
+        self.para_category_icons = {}
+        style = self.style()
+        default_enums = {
+            "Projects": QStyle.StandardPixmap.SP_FileDialogNewFolder,
+            "Areas": QStyle.StandardPixmap.SP_DriveHDIcon,
+            "Resources": QStyle.StandardPixmap.SP_DirOpenIcon,
+            "Archives": QStyle.StandardPixmap.SP_DialogSaveButton
+        }
+
+        for category, default_enum in default_enums.items():
+            value = custom_icon_paths.get(category)
+            loaded_successfully = False
+            if value:
+                if value.startswith("SP_"): # Handle built-in icon identifier
+                    try:
+                        enum = getattr(QStyle.StandardPixmap, value)
+                        self.para_category_icons[category] = style.standardIcon(enum)
+                        loaded_successfully = True
+                    except AttributeError:
+                        self.logger.warn(f"Invalid built-in icon identifier '{value}' for {category}. Using default.")
+                elif os.path.exists(value): # Handle file path
+                    pixmap = QPixmap(value)
+                    if not pixmap.isNull():
+                        self.para_category_icons[category] = QIcon(pixmap)
+                        loaded_successfully = True
+                    else:
+                        self.logger.warn(f"Failed to load custom icon for {category} from path: {path}. Using default.")
+            
+            if not loaded_successfully:
+                self.para_category_icons[category] = style.standardIcon(default_enum)
+
+# --- REPLACE the open_settings_dialog method ---
+
+
+    # def perform_search(self):
+    #     """
+    #     The actual search and UI update logic, executed after the debounce delay.
+    #     This is the fully optimized version of the old `handle_search`.
+    #     """
+    #     term = self.search_bar.text().lower().strip()
+
+    #     if not term:
+    #         if self.base_dir:
+    #             self.bottom_pane.setCurrentWidget(self.tree_view)
+    #         else:
+    #             self.bottom_pane.setCurrentWidget(self.welcome_widget)
+    #         return
+
+    #     self.bottom_pane.setCurrentWidget(self.search_results_list)
+    #     self.search_results_list.clear() # Clear previous results immediately
+
+    #     if not self.file_index:
+    #         return
+
+    #     # Perform the search in-memory (this is fast)
+    #     results = [item for item in self.file_index if term in item["name_lower"]]
+        
+    #     # If there are many results, inform the user and only show a portion
+    #     if len(results) > 100:
+    #         status_item = QListWidgetItem(f"Showing first 100 of {len(results)} results...")
+    #         status_item.setFlags(Qt.ItemFlag.NoItemFlags) # Make it unselectable
+    #         self.search_results_list.addItem(status_item)
+
+    #     file_icon_provider = QFileIconProvider()
+
+    #     # IMPORTANT: Limit the loop to a max of 50 items to keep the UI fluid
+    #     for item_data in results[:100]:
+    #         path = item_data["path"]
+    #         item_widget = QWidget()
+    #         item_layout = QHBoxLayout(item_widget)
+    #         item_layout.setContentsMargins(8, 8, 8, 8)
+    #         item_layout.setSpacing(12)
+
+    #         icon = file_icon_provider.icon(QFileInfo(path))
+    #         icon_label = QLabel()
+    #         icon_label.setPixmap(icon.pixmap(QSize(32, 32)))
+            
+    #         rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+    #         if rel_path == '.': rel_path = 'Root'
+            
+    #         text_html = f"""
+    #         <div>
+    #             <span id='SearchResultName'>{os.path.basename(path)}</span><br>
+    #             <span id='SearchResultPath'>{rel_path}</span>
+    #         </div>
+    #         """
+    #         info_label = QLabel(text_html)
+    #         info_label.setWordWrap(True)
+
+    #         formatted_size = format_size(item_data['size'])
+    #         mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+            
+    #         meta_html = f"""
+    #         <div style='text-align: right; font-size: 9pt;'>
+    #             {formatted_size} <br>
+    #             <span style='color: #98c379;'>Modified: {mtime_str}</span>
+    #         </div>
+    #         """
+    #         meta_label = QLabel(meta_html)
+    #         meta_label.setFixedWidth(160)
+    #         meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    #         item_layout.addWidget(icon_label)
+    #         item_layout.addWidget(info_label, 1)
+    #         item_layout.addWidget(meta_label)
+
+    #         list_item = QListWidgetItem(self.search_results_list)
+    #         list_item.setData(Qt.ItemDataRole.UserRole, path)
+    #         list_item.setSizeHint(item_widget.sizeHint())
+            
+    #         self.search_results_list.addItem(list_item)
+    #         self.search_results_list.setItemWidget(list_item, item_widget)
+    
+    
+    # --- ADD these THREE new methods for pagination logic ---
+
+    def go_to_next_page(self):
+        if (self.current_search_page + 1) * self.RESULTS_PER_PAGE < len(self.current_search_results):
+            self.current_search_page += 1
+            self.display_search_page()
+
+    def go_to_previous_page(self):
+        if self.current_search_page > 0:
+            self.current_search_page -= 1
+            self.display_search_page()
+
+    # def display_search_page(self):
+    #     """Renders the current page of search results into the list widget."""
+    #     self.search_results_list.clear()
+
+    #     start_index = self.current_search_page * self.RESULTS_PER_PAGE
+    #     end_index = start_index + self.RESULTS_PER_PAGE
+    #     page_items = self.current_search_results[start_index:end_index]
+        
+    #     total_results = len(self.current_search_results)
+    #     total_pages = (total_results + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
+    #     if total_pages == 0: total_pages = 1
+
+    #     # Update status label and buttons
+    #     self.page_status_label.setText(f"Page {self.current_search_page + 1} of {total_pages} ({total_results} results)")
+    #     self.prev_page_button.setEnabled(self.current_search_page > 0)
+    #     self.next_page_button.setEnabled(end_index < total_results)
+        
+    #     # --- (This is the same item rendering logic from before) ---
+    #     file_icon_provider = QFileIconProvider()
+    #     for item_data in page_items:
+    #         path = item_data["path"]
+    #         item_widget = QWidget()
+    #         # ... (rest of the item widget creation logic is identical to before) ...
+    #         item_layout = QHBoxLayout(item_widget)
+    #         item_layout.setContentsMargins(8, 8, 8, 8)
+    #         item_layout.setSpacing(12)
+    #         icon = file_icon_provider.icon(QFileInfo(path))
+    #         icon_label = QLabel()
+    #         icon_label.setPixmap(icon.pixmap(QSize(32, 32)))
+    #         rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+    #         if rel_path == '.': rel_path = 'Root'
+    #         text_html = f"""<div><span id='SearchResultName'>{os.path.basename(path)}</span><br><span id='SearchResultPath'>{rel_path}</span></div>"""
+    #         info_label = QLabel(text_html)
+    #         info_label.setWordWrap(True)
+    #         formatted_size = format_size(item_data['size'])
+    #         mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+    #         meta_html = f"""<div style='text-align: right; font-size: 9pt;'>{formatted_size} <br><span style='color: #98c379;'>Modified: {mtime_str}</span></div>"""
+    #         meta_label = QLabel(meta_html)
+    #         meta_label.setFixedWidth(160)
+    #         meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    #         item_layout.addWidget(icon_label)
+    #         item_layout.addWidget(info_label, 1)
+    #         item_layout.addWidget(meta_label)
+    #         list_item = QListWidgetItem(self.search_results_list)
+    #         list_item.setData(Qt.ItemDataRole.UserRole, path)
+    #         list_item.setSizeHint(item_widget.sizeHint())
+    #         self.search_results_list.addItem(list_item)
+    #         self.search_results_list.setItemWidget(list_item, item_widget)
+    
+    # --- REPLACE your display_search_page method with this one ---
+
+    def display_search_page(self):
+        """Renders the current page of search results into the list widget."""
         self.search_results_list.clear()
 
-        if not self.file_index:
-            return
+        start_index = self.current_search_page * self.RESULTS_PER_PAGE
+        end_index = start_index + self.RESULTS_PER_PAGE
+        page_items = self.current_search_results[start_index:end_index]
+        
+        total_results = len(self.current_search_results)
+        total_pages = (total_results + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
+        if total_pages == 0: total_pages = 1
 
-        results = [item for item in self.file_index if term in item["name_lower"]]
+        self.page_status_label.setText(f"Page {self.current_search_page + 1} of {total_pages} ({total_results} results)")
+        self.prev_page_button.setEnabled(self.current_search_page > 0)
+        self.next_page_button.setEnabled(end_index < total_results)
+        
         file_icon_provider = QFileIconProvider()
+        # Pre-fetch PARA category icons
+        # para_icons = {name: frame.findChild(QLabel).pixmap().scaled(45, 45, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) for name, frame in self.drop_frames.items()}
+        
+        # 40*40 is fixed size
+        para_icons = {name: icon.pixmap(40, 40) for name, icon in self.para_category_icons.items()}
 
-        for item_data in results:
+        for item_data in page_items:
             path = item_data["path"]
+            
+            # --- NEW DYNAMIC WIDGET CREATION ---
             item_widget = QWidget()
-            item_layout = QHBoxLayout(item_widget)
-            item_layout.setContentsMargins(8, 8, 8, 8) # 增加内边距
-            item_layout.setSpacing(12)
+            # Main horizontal layout: File Icon | Details (V) | Metadata (V)
+            main_layout = QHBoxLayout(item_widget)
+            main_layout.setContentsMargins(8, 8, 8, 8)
+            main_layout.setSpacing(12)
 
-            icon = file_icon_provider.icon(QFileInfo(path))
-            icon_label = QLabel()
-            icon_label.setPixmap(icon.pixmap(QSize(32, 32))) # 图标也调大一点
+            # 1. Left side: File type icon
+            file_type_icon = file_icon_provider.icon(QFileInfo(path))
+            file_type_label = QLabel()
+            file_type_label.setPixmap(file_type_icon.pixmap(QSize(32, 32)))
+            
+            # 2. Center: Vertical layout for Filename and new Path display
+            details_layout = QVBoxLayout()
+            details_layout.setSpacing(2)
+            
+            # Filename
+            filename_label = QLabel(f"<span id='SearchResultName'>{os.path.basename(path)}</span>")
+            
+            # Path (New iconic layout)
+            path_layout = QHBoxLayout()
+            path_layout.setSpacing(5)
             
             rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
-            if rel_path == '.': rel_path = 'Root'
-            
-            # 使用 ID 选择器代替内联样式
-            # calculate size and mtime strings
-            # render the HTML with the new styles
-            text_html = f"""
-            <div>
-                <span id='SearchResultName'>{os.path.basename(path)}</span>
-                <br>
-                <span id='SearchResultPath'>{rel_path}</span>
-            </div>
-            """
-            info_label = QLabel(text_html)
-            info_label.setWordWrap(True)
+            path_parts = rel_path.split(os.sep)
+            root_folder = path_parts[0]
+            sub_path = os.path.join(*path_parts[1:]) if len(path_parts) > 1 else ""
 
+            category_name = self.folder_to_category.get(root_folder)
+            if category_name and category_name in para_icons:
+                # It's a PARA folder, use the icon
+                root_icon_label = QLabel()
+                root_icon_label.setPixmap(para_icons[category_name])
+                path_layout.addWidget(root_icon_label)
+                # Use a prettier separator
+                path_layout.addWidget(QLabel("▶"))
+                path_text = sub_path
+            else:
+                # Not a standard PARA folder, just show the text
+                path_text = rel_path
+
+            # path_label = QLabel(f"<span id='SearchResultPath'>{path_text}</span>")
+            display_path = path_text.replace(os.sep, "  ▶  ")
+            path_label = QLabel(f"<span id='SearchResultPath'>{display_path}</span>")
+            
+            path_layout.addWidget(path_label)
+            path_layout.addStretch()
+
+            details_layout.addWidget(filename_label)
+            details_layout.addLayout(path_layout)
+            
+            # 3. Right side: Metadata
             formatted_size = format_size(item_data['size'])
             mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
-            
-            # 增大元数据字体，并移除颜色硬编码
-            meta_html = f"""
-            <div style='text-align: right; font-size: 9pt;'>
-                {formatted_size} <br>
-                <span style='color: #98c379;'>Modified: {mtime_str}</span>
-            </div>
-            """
+            meta_html = f"<div style='text-align: right; font-size: 9pt;'>{formatted_size} <br><span style='color: #98c379;'>Modified: {mtime_str}</span></div>"
             meta_label = QLabel(meta_html)
-            meta_label.setFixedWidth(160) # 稍微加宽以适应更大的字体
+            meta_label.setFixedWidth(160)
             meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-            item_layout.addWidget(icon_label)
-            item_layout.addWidget(info_label, 1)
-            item_layout.addWidget(meta_label)
-
+            
+            # Assemble main layout
+            main_layout.addWidget(file_type_label)
+            main_layout.addLayout(details_layout, 1) # The '1' makes this section stretch
+            main_layout.addWidget(meta_label)
+            
+            # Add to list
             list_item = QListWidgetItem(self.search_results_list)
             list_item.setData(Qt.ItemDataRole.UserRole, path)
             list_item.setSizeHint(item_widget.sizeHint())
-            
             self.search_results_list.addItem(list_item)
             self.search_results_list.setItemWidget(list_item, item_widget)
+            
+# --- And REPLACE perform_search with this new version ---
+
+    def perform_search(self):
+        """
+        Performs a search, stores all results, and displays the first page.
+        """
+        term = self.search_bar.text().lower().strip()
+        if not term:
+            self.current_search_results = []
+            if self.base_dir: self.bottom_pane.setCurrentWidget(self.tree_view)
+            else: self.bottom_pane.setCurrentWidget(self.welcome_widget)
+            return
+
+        self.bottom_pane.setCurrentWidget(self.bottom_pane.findChild(QWidget, 'SearchPageWidget') or self.search_results_list.parentWidget())
+
+        if self.file_index:
+            self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+        else:
+            self.current_search_results = []
+            
+        self.current_search_page = 0
+        self.display_search_page()
             
     def get_category_from_path(self, path):
         if not self.base_dir: return None
@@ -1055,18 +2268,24 @@ class ParaFileManager(QMainWindow):
                 return cat_name
         return None
             
+    # --- REPLACE your show_context_menu method with this one ---
+
     def show_context_menu(self, pos):
         index = self.tree_view.indexAt(pos)
         if not index.isValid(): return
         path = self.file_system_model.filePath(index)
-        menu = QMenu()
-        style = self.style()
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "Open", lambda: self.open_item(path))
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer", lambda: self.show_in_explorer(path))
-        menu.addSeparator()
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Rename...", lambda: self.rename_item(index))
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), "Delete...", lambda: self.delete_item(index))
+        menu = self._build_context_menu(path)
         menu.exec(self.tree_view.viewport().mapToGlobal(pos))
+        
+# --- ADD a new handler for the search results list ---
+
+    def show_search_result_context_menu(self, pos):
+        item = self.search_results_list.itemAt(pos)
+        if not item: return
+        path = item.data(Qt.ItemDataRole.UserRole) # Get path from item data
+        if not path: return
+        menu = self._build_context_menu(path)
+        menu.exec(self.search_results_list.mapToGlobal(pos))
 
     def open_selected_item(self, item_or_index):
         path = ""
@@ -1093,7 +2312,38 @@ class ParaFileManager(QMainWindow):
         except Exception as e:
             self.log_and_show("Could not show item in explorer.", "error")
             self.logger.error(f"Failed to show {path}", exc_info=True)
+    
+    # --- ADD THIS NEW METHOD TO THE ParaFileManager CLASS ---
+    # Place it near the other context menu methods like rename_item.
 
+    def handle_move_to_category(self, source_path, category_name):
+        """
+        Handles the logic for moving an item to a selected PARA category.
+        Opens a dialog for the user to select the final destination subfolder.
+        """
+        if not self.base_dir:
+            return
+
+        # Define the root directory for the destination category
+        category_root = os.path.join(self.base_dir, self.para_folders[category_name])
+        
+        # Open a dialog to let the user select a folder WITHIN that category
+        destination_dir = QFileDialog.getExistingDirectory(
+            self,
+            f"Select Destination Folder within '{category_name}'",
+            category_root, # Start Browse from the category root
+            QFileDialog.Option.ShowDirsOnly
+        )
+
+        if destination_dir: # User selected a directory and clicked OK
+            self.log_and_show(f"Moving '{os.path.basename(source_path)}'...", "info")
+            self.run_task(
+                self._task_move_item,
+                on_success=self.on_final_refresh_finished,
+                source_path=source_path,
+                destination_dir=destination_dir
+            )
+            
     def rename_item(self, index):
         old_path = self.file_system_model.filePath(index)
         old_filename = os.path.basename(old_path)
@@ -1108,7 +2358,41 @@ class ParaFileManager(QMainWindow):
             except Exception as e:
                 self.log_and_show(f"Could not rename file.", "error")
                 self.logger.error(f"Failed to rename {old_path}", exc_info=True)
+    # --- ADD THESE TWO NEW METHODS TO THE ParaFileManager CLASS ---
+# Place them near the other context menu handlers like rename_item.
 
+    def create_new_folder(self, target_dir):
+        """Prompts for a name and creates a new folder in the target directory."""
+        new_folder_name, ok = QInputDialog.getText(self, "Create New Folder", "Enter folder name:")
+        if ok and new_folder_name:
+            new_path = os.path.join(target_dir, new_folder_name)
+            if os.path.exists(new_path):
+                QMessageBox.warning(self, "Error", f"A file or folder named '{new_folder_name}' already exists.")
+                return
+            try:
+                os.makedirs(new_path)
+                self.log_and_show(f"Folder '{new_folder_name}' created.", "info")
+            except Exception as e:
+                self.log_and_show(f"Could not create folder: {e}", "error")
+                self.logger.error(f"Failed to create folder at {new_path}", exc_info=True)
+
+    def create_new_file(self, target_dir):
+        """Prompts for a name and creates a new, empty file."""
+        new_file_name, ok = QInputDialog.getText(self, "Create New File", "Enter file name (e.g., report.md):")
+        if ok and new_file_name:
+            new_path = os.path.join(target_dir, new_file_name)
+            if os.path.exists(new_path):
+                QMessageBox.warning(self, "Error", f"A file or folder named '{new_file_name}' already exists.")
+                return
+            try:
+                # Create an empty file
+                with open(new_path, 'w') as f:
+                    pass
+                self.log_and_show(f"File '{new_file_name}' created.", "info")
+            except Exception as e:
+                self.log_and_show(f"Could not create file: {e}", "error")
+                self.logger.error(f"Failed to create file at {new_path}", exc_info=True)
+                
     def delete_item(self, index):
         path = self.file_system_model.filePath(index)
         filename = os.path.basename(path)
@@ -1139,7 +2423,95 @@ class ParaFileManager(QMainWindow):
         elif cond_type == "keyword":
             return cond_val in filename_lower
         return False
+    
+    
+    #--- ADD THIS NEW TASK FUNCTION TO THE ParaFileManager CLASS ---
 
+    def _task_process_hybrid_drop(self, progress_callback, dropped_paths, dest_root, category_name):
+        """
+        Processes a list of paths, moving files and entire directories as-is.
+        Applies rules to files, but not to directories. Handles name conflicts for both.
+        """
+        total = len(dropped_paths)
+        self.logger.info(f"Starting Hybrid Move of {total} items to {dest_root}")
+        
+        for i, path in enumerate(dropped_paths):
+            progress_callback(f"Moving: {os.path.basename(path)}", i + 1, total)
+            
+            # Check if the path (still) exists before processing
+            if not os.path.exists(path):
+                self.logger.warn(f"Item no longer exists, skipping: {path}")
+                continue
+
+            # --- Handle Directories ---
+            if os.path.isdir(path):
+                dir_name = os.path.basename(path)
+                final_dest_path = os.path.join(dest_root, dir_name)
+
+                # Handle name conflicts for directories
+                if os.path.exists(final_dest_path):
+                    base, ext = os.path.splitext(final_dest_path) # Use splitext to handle folders with dots
+                    counter = 1
+                    while os.path.exists(final_dest_path):
+                        final_dest_path = f"{base}_conflict_{counter}{ext}"
+                        counter += 1
+                    self.logger.warn(f"Conflict: Directory '{dir_name}' will be moved as '{os.path.basename(final_dest_path)}'")
+                
+                try:
+                    shutil.move(path, final_dest_path)
+                    self.logger.info(f"Moved directory {path} to {final_dest_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to move directory {path}", exc_info=True)
+                continue
+
+            # --- Handle Files (existing logic) ---
+            if os.path.isfile(path):
+                filename = os.path.basename(path)
+                final_dest_dir = dest_root
+                
+                # Apply rules to files
+                for rule in self.rules:
+                    if rule.get("category") == category_name and self.check_rule(rule, filename):
+                        action, value = rule.get("action"), rule.get("action_value")
+                        if action == "subfolder":
+                            final_dest_dir = os.path.join(dest_root, value)
+                        elif action == "prefix":
+                            filename = f"{value}{filename}"
+                        break
+                
+                new_path = os.path.join(final_dest_dir, filename)
+
+                # Handle name conflicts for files
+                if os.path.exists(new_path):
+                    base, ext = os.path.splitext(new_path)
+                    counter = 1
+                    while os.path.exists(new_path):
+                        new_path = f"{base}_conflict_{counter}{ext}"
+                        counter += 1
+                    self.logger.warn(f"Conflict: File '{filename}' will be moved as '{os.path.basename(new_path)}'")
+
+                try:
+                    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                    shutil.move(path, new_path)
+                except Exception as e:
+                    self.logger.error(f"Failed to move file {path}", exc_info=True)
+        
+        self.logger.info("Cleaning up empty source directories...")
+        protected_paths = {os.path.normpath(os.path.join(self.base_dir, d)) for d in self.para_folders.values()}
+        source_dirs = {os.path.dirname(p) for p in dropped_paths}
+        
+        for folder in sorted(source_dirs, key=len, reverse=True):
+            try:
+                if os.path.normpath(folder) in protected_paths:
+                    continue
+                if not os.listdir(folder):
+                    self.logger.info(f"Removing empty source directory: {folder}")
+                    shutil.rmtree(folder)
+            except Exception as e:
+                self.logger.warn(f"Could not remove source directory {folder}: {e}")
+
+        return "Hybrid move complete."
+    
     def open_log_viewer(self):
         try:
             dialog = LogViewerDialog(self.logger, self)
@@ -1148,19 +2520,52 @@ class ParaFileManager(QMainWindow):
         except Exception as e:
             self.logger.error(f"Failed to open log viewer: {e}", exc_info=True)
             
+    # def open_settings_dialog(self):
+    #     dialog = SettingsDialog(self)
+    #     dialog.setWindowIcon(self.windowIcon())
+    #     if dialog.exec():
+    #         self.log_and_show("Settings saved. Reloading configuration...", "info")
+    #         self.reload_configuration()
+    
     def open_settings_dialog(self):
-        dialog = SettingsDialog(self)
+        # Pass the current icons to the dialog to ensure previews are correct
+        dialog = SettingsDialog(self.para_category_icons, self)
         dialog.setWindowIcon(self.windowIcon())
         if dialog.exec():
             self.log_and_show("Settings saved. Reloading configuration...", "info")
             self.reload_configuration()
     
+    #--- ADD THIS NEW METHOD TO THE ParaFileManager CLASS ---
+# It can be placed near open_log_viewer or open_settings_dialog
+
+    def open_about_dialog(self):
+        """Reads release notes and displays them in a dialog."""
+        self.logger.info("User opened the About dialog.")
+        try:
+            # Use resource_path to ensure it works with PyInstaller
+            notes_path = resource_path("release_notes.md")
+            with open(notes_path, "r", encoding="utf-8") as f:
+                notes_markdown = f.read()
+        except FileNotFoundError:
+            self.logger.error("release_notes.md not found!")
+            notes_markdown = ("# Error\n\nCould not find the release notes file (`release_notes.md`). "
+                              "Please ensure it is in the same directory as the application.")
+        except Exception as e:
+            self.logger.error(f"Failed to read release_notes.md: {e}", exc_info=True)
+            notes_markdown = f"# Error\n\nAn unexpected error occurred while reading the release notes:\n\n`{e}`"
+
+        dialog = AboutDialog(self.APP_VERSION, notes_markdown, self)
+        dialog.exec()
+    
 # --- EXECUTION BLOCK ---
 if __name__ == "__main__":
+    # Set the global exception hook. This MUST be the first thing to do.
+    # sys.excepthook = global_exception_hook
     app = QApplication(sys.argv)
     try:
         main_logger = Logger()
         window = ParaFileManager(main_logger)
+        sys.excepthook = partial(global_exception_hook, window=window)
         try:
             window.setWindowIcon(QIcon(resource_path('icon.ico')))
         except Exception as e:
