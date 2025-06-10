@@ -37,7 +37,7 @@ from PyQt6.QtGui import (
     QFont, QIcon, QAction, QCursor, QFileSystemModel, QPainter, QPixmap, QColor, QPalette
 )
 from PyQt6.QtCore import (
-    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal, QFileInfo, QTimer
+    Qt, QUrl, QSize, QModelIndex, QDir, QThread, pyqtSignal, QFileInfo, QTimer, QFileSystemWatcher
 )
 
 
@@ -305,140 +305,124 @@ class Logger:
 
 # --- REPLACE your entire MoveToDialog class with this one ---
 
-# --- ADD THIS ENTIRE NEW CLASS to your UI DIALOGS section ---
-# You'll also need QTreeWidget, QTreeWidgetItem, QRadioButton, QButtonGroup imports
 
-# class FullScanResultDialog(QDialog):
-#     """A dialog to display sets of duplicate files and let the user choose which to keep."""
-#     def __init__(self, duplicate_sets, parent=None):
-#         super().__init__(parent)
-#         self.setWindowTitle("Duplicate File Scan Results")
-#         self.setMinimumSize(1000, 700)
-#         self.setStyleSheet(parent.styleSheet())
-#         self.choices = {} # To store the files to be kept
+# In your UI DIALOGS section, REPLACE the entire MoveToDialog class
+class MoveToDialog(QDialog):
+    """A dialog to select a destination folder, now with history and favorites."""
+    def __init__(self, base_path, source_paths, history, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Move Items To...")
+        self.setMinimumSize(550, 600)
+        self.setStyleSheet(parent.styleSheet())
+        self.destination_path = None
+        self.history = history
 
-#         layout = QVBoxLayout(self)
-#         layout.addWidget(QLabel("The following sets of files have identical content. For each set, please select one file to keep."))
+        layout = QVBoxLayout(self)
+
+        # --- NEW: History ComboBox ---
+        history_layout = QHBoxLayout()
+        history_layout.addWidget(QLabel("Recent Destinations:"))
+        self.history_combo = QComboBox()
+        self.history_combo.setPlaceholderText("Select from recently used folders...")
+        if self.history:
+            self.history_combo.addItems(self.history)
+        self.history_combo.activated.connect(self.on_history_selected)
+        history_layout.addWidget(self.history_combo)
+        layout.addLayout(history_layout)
+
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        # --- Tree View for Navigation ---
+        layout.addWidget(QLabel("Or browse for a new destination:"))
+        self.model = QFileSystemModel()
+        self.model.setRootPath(base_path)
+        self.model.setFilter(QDir.Filter.NoDotAndDotDot | QDir.Filter.AllDirs)
+
+        self.tree = QTreeView()
+        self.tree.setModel(self.model)
+        self.tree.setRootIndex(self.model.index(base_path))
+        for i in range(1, self.model.columnCount()):
+            self.tree.setColumnHidden(i, True)
+        self.tree.clicked.connect(self.on_tree_clicked)
+        layout.addWidget(self.tree)
         
-#         self.tree = QTreeWidget()
-#         self.tree.setColumnCount(3)
-#         self.tree.setHeaderLabels(["Keep?", "File Path", "Modified Date"])
-#         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-#         layout.addWidget(self.tree)
+        # --- Selected Path Display ---
+        self.selected_path_label = QLineEdit()
+        self.selected_path_label.setReadOnly(True)
+        self.selected_path_label.setPlaceholderText("No folder selected")
+        layout.addWidget(self.selected_path_label)
 
-#         self.button_groups = [] # To manage radio buttons
-#         self.populate_tree(duplicate_sets)
-#         self.tree.expandAll()
+        # --- OK and Cancel Buttons ---
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setEnabled(False)
+        self.ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(self.ok_button)
+        layout.addLayout(button_layout)
 
-#         button_box = QHBoxLayout()
-#         info_label = QLabel("All other files will be moved to the Recycle Bin.")
-#         info_label.setStyleSheet("font-style: italic;")
-#         button_box.addWidget(info_label)
-#         button_box.addStretch()
-#         ok_button = QPushButton("Confirm Actions")
-#         ok_button.setDefault(True)
-#         ok_button.clicked.connect(self.accept)
-#         cancel_button = QPushButton("Cancel")
-#         cancel_button.clicked.connect(self.reject)
-#         button_box.addWidget(cancel_button)
-#         button_box.addWidget(ok_button)
-#         layout.addLayout(button_box)
+    def on_history_selected(self, index):
+        """When a path is chosen from history, select it."""
+        path = self.history_combo.itemText(index)
+        self.set_destination(path)
+        # Also select it in the tree view for visual feedback
+        self.tree.setCurrentIndex(self.model.index(path))
 
-#     def populate_tree(self, duplicate_sets):
-#         for i, (hash_val, paths) in enumerate(duplicate_sets.items()):
-#             file_size = format_size(os.path.getsize(paths[0]))
-#             group_header = QTreeWidgetItem(self.tree, [f"Set {i+1}: {len(paths)} files ({file_size} each)", "", ""])
-#             group_header.setFont(0, QFont("Segoe UI", 10, QFont.Weight.Bold))
+    def on_tree_clicked(self, index):
+        """When a folder is clicked in the tree, update the selection."""
+        path = self.model.filePath(index)
+        self.set_destination(path)
+
+    def set_destination(self, path):
+        """Central method to set the chosen destination path."""
+        self.destination_path = path
+        self.selected_path_label.setText(path)
+        self.ok_button.setEnabled(True)
+
+    def accept(self):
+        if self.destination_path:
+            super().accept()
             
-#             button_group = QButtonGroup(self)
-#             self.button_groups.append(button_group)
-
-#             for path in sorted(paths):
-#                 radio_button = QRadioButton()
-#                 button_group.addButton(radio_button)
-                
-#                 mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S')
-#                 child_item = QTreeWidgetItem(group_header, ["", path, mtime])
-#                 self.tree.setItemWidget(child_item, 0, radio_button)
-                
-#             # Default to keeping the most recently modified file
-#             latest_file = max(paths, key=os.path.getmtime)
-#             for i in range(group_header.childCount()):
-#                 if group_header.child(i).text(1) == latest_file:
-#                     button_group.buttons()[i].setChecked(True)
-#                     break
-    
-#     def get_files_to_trash(self):
-#         files_to_trash = []
-#         for i, (hash_val, paths) in enumerate(self.tree.model().data_source.items()):
-#             button_group = self.button_groups[i]
-#             checked_button = button_group.checkedButton()
-#             if not checked_button: continue # Should not happen if populated correctly
-
-#             checked_index = button_group.buttons().index(checked_button)
-#             file_to_keep = sorted(paths)[checked_index]
-            
-#             for path in paths:
-#                 if path != file_to_keep:
-#                     files_to_trash.append(path)
-#         return files_to_trash
-
-#     def accept(self):
-#         # We need to manually set data source to tree model to retrieve it later
-#         # This is a bit of a workaround because the model is not directly accessible
-#         self.tree.model().data_source = self.parent().duplicate_sets_cache
-#         super().accept()
-
-
-# --- REPLACE your entire FullScanResultDialog class with this one ---
-
+# In your UI DIALOGS section, REPLACE the entire FullScanResultDialog class
 class FullScanResultDialog(QDialog):
     def __init__(self, duplicate_sets, parent=None):
         super().__init__(parent)
-        self.main_window = parent # Store a reference to the main window
+        self.main_window = parent
         self.setWindowTitle("Duplicate File Scan Results")
         self.setMinimumSize(1200, 700)
         self.setStyleSheet(parent.styleSheet())
         self.duplicate_sets = duplicate_sets
-        self.active_group_header = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("The following sets of files have identical content. The best candidate has been pre-selected for you based on the reasons below."))
         
         self.tree = QTreeWidget()
-        self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Keep?", "File Path", "Modified Date", "Recommendation"])
+        self.tree.setColumnCount(5) # Added a new column for the score
+        self.tree.setHeaderLabels(["Keep?", "File Path", "Score", "Reasoning", "Modified Date"])
         self.tree.setAlternatingRowColors(True)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         header = self.tree.header()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 80)
-        header.resizeSection(1, 550)
-        header.resizeSection(2, 150)
-        header.resizeSection(3, 200)
+        header.resizeSection(0, 50)  # Keep checkbox
+        header.resizeSection(1, 500) # Path
+        header.resizeSection(2, 80)  # Score
+        header.resizeSection(3, 250) # Reason
+        header.resizeSection(4, 150) # Date
         
         layout.addWidget(self.tree)
         self.populate_tree()
         self.tree.expandAll()
         
-        self.tree.selectionModel().selectionChanged.connect(self.on_selection_changed)
-        
+        # ... (rest of the __init__ method, like buttons, is the same as your last version)
         button_box = QHBoxLayout()
-        self.keep_all_button = QPushButton("Keep All in Selected")
-        self.keep_all_button.setToolTip("Checks all items in the currently selected group(s).")
-        self.keep_all_button.setEnabled(False)
-        self.keep_all_button.clicked.connect(self.keep_all_in_selected_groups)
-        
-        self.trash_all_button = QPushButton("Trash All in Selected")
-        self.trash_all_button.setToolTip("Unchecks all items in the currently selected group(s).")
-        self.trash_all_button.setEnabled(False)
-        self.trash_all_button.clicked.connect(self.trash_all_in_selected_groups)
-
-        button_box.addWidget(self.keep_all_button)
-        button_box.addWidget(self.trash_all_button)
         button_box.addStretch()
-
         ok_button = QPushButton("Confirm Actions")
         ok_button.setDefault(True)
         ok_button.clicked.connect(self.accept)
@@ -448,15 +432,12 @@ class FullScanResultDialog(QDialog):
         button_box.addWidget(ok_button)
         layout.addLayout(button_box)
 
+
     def populate_tree(self):
-        """
-        Populates the tree with the full, transparent scoring and reason system.
-        """
         for i, (hash_val, paths) in enumerate(self.duplicate_sets.items()):
             file_size = format_size(os.path.getsize(paths[0]))
             group_header = QTreeWidgetItem(self.tree, [f"Set {i+1}: {len(paths)} files ({file_size} each)"])
             group_header.setFont(0, QFont("Segoe UI", 10, QFont.Weight.Bold))
-            group_header.setData(0, Qt.ItemDataRole.UserRole, "group_header")
 
             scored_files = []
             for path in paths:
@@ -464,80 +445,28 @@ class FullScanResultDialog(QDialog):
                 mod_time = os.path.getmtime(path)
                 scored_files.append({"path": path, "score": score, "reason": reason, "mtime": mod_time})
             
+            # Primary sort by score (desc), secondary by modification time (desc)
             scored_files.sort(key=lambda x: (x["score"], x["mtime"]), reverse=True)
             best_file = scored_files[0]
 
             for file_data in scored_files:
                 path = file_data["path"]
                 mtime = datetime.fromtimestamp(file_data["mtime"]).strftime('%Y-%m-%d %H:%M:%S')
-                child_item = QTreeWidgetItem(group_header, ["", path, mtime, ""])
+                
+                # Display score and reason directly in the table
+                score_str = str(file_data['score'])
+                reason_str = file_data['reason']
+                
+                child_item = QTreeWidgetItem(group_header, ["", path, score_str, reason_str, mtime])
                 
                 checkbox = QCheckBox()
-                self.tree.setItemWidget(child_item, 0, checkbox)
-
                 if path == best_file["path"]:
                     checkbox.setChecked(True)
-                    recommend_text = "<b>✔ Recommended</b>"
-                    tooltip_text = (
-                        f"<b>Top Choice based on:</b><br>"
-                        f"&nbsp;&nbsp;• <b>Primary Reason:</b> {file_data['reason']}<br>"
-                        f"&nbsp;&nbsp;• <b>Score:</b> {file_data['score']} (Higher is better)"
-                    )
-                else:
-                    if file_data["score"] < best_file["score"]:
-                        recommend_text = f"<i style='color:#cda152;'>Lower Score</i>"
-                        tooltip_text = (
-                            f"<b>Not Recommended because:</b><br>"
-                            f"&nbsp;&nbsp;• <b>Primary Reason:</b> {file_data['reason']}<br>"
-                            f"&nbsp;&nbsp;• <b>Score:</b> {file_data['score']} (Lower than best score of {best_file['score']})"
-                        )
-                    else:
-                        recommend_text = f"<i style='color:#6c7380;'>Older File</i>"
-                        tooltip_text = (
-                            f"<b>Not Recommended because:</b><br>"
-                            f"&nbsp;&nbsp;• <b>Score:</b> Identical to best file ({best_file['score']}).<br>"
-                            f"&nbsp;&nbsp;• <b>Tie-breaker:</b> This file is older."
-                        )
-
-                reason_label = QLabel(recommend_text)
-                reason_label.setToolTip(tooltip_text)
-                self.tree.setItemWidget(child_item, 3, reason_label)
-
-    def on_selection_changed(self):
-        selected_groups = self.get_selected_groups()
-        count = len(selected_groups)
-        is_group_header_selected = any(item.data(0, Qt.ItemDataRole.UserRole) == "group_header" for item in self.tree.selectedItems())
-
-        self.keep_all_button.setEnabled(is_group_header_selected)
-        self.trash_all_button.setEnabled(is_group_header_selected)
-
-        if count > 0:
-            self.keep_all_button.setText(f"Keep All in {count} Group(s)")
-            self.trash_all_button.setText(f"Trash All in {count} Group(s)")
-        else:
-            self.keep_all_button.setText("Keep All in Selected")
-            self.trash_all_button.setText("Trash All in Selected")
-
-    def get_selected_groups(self):
-        selected_groups = []
-        for item in self.tree.selectedItems():
-            header_item = item if item.data(0, Qt.ItemDataRole.UserRole) == "group_header" else item.parent()
-            if header_item and header_item not in selected_groups:
-                selected_groups.append(header_item)
-        return selected_groups
-
-    def _set_selected_groups_check_state(self, checked):
-        for group_item in self.get_selected_groups():
-            for i in range(group_item.childCount()):
-                child = group_item.child(i)
-                if checkbox := self.tree.itemWidget(child, 0):
-                    checkbox.setChecked(checked)
-
-    def keep_all_in_selected_groups(self):
-        self._set_selected_groups_check_state(True)
-        
-    def trash_all_in_selected_groups(self):
-        self._set_selected_groups_check_state(False)
+                    # Visually highlight the recommended choice
+                    for col in range(1, self.tree.columnCount()):
+                        child_item.setBackground(col, QColor("#3a543f")) # A subtle green highlight
+                
+                self.tree.setItemWidget(child_item, 0, checkbox)
 
     def get_files_to_trash(self):
         files_to_trash = []
@@ -1643,6 +1572,20 @@ class ParaFileManager(QMainWindow):
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.perform_search)
         
+        
+        # Add this new timer for debouncing file system changes
+        self.reindex_timer = QTimer(self)
+        self.reindex_timer.setSingleShot(True)
+        self.reindex_timer.timeout.connect(lambda: self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt))
+        
+        
+        # In ParaFileManager.__init__
+
+        self.index_cache_path = resource_path("file_index.cache")
+        self.file_watcher = QFileSystemWatcher(self)
+        self.file_watcher.directoryChanged.connect(self.on_directory_changed)
+        self.file_watcher.fileChanged.connect(self.on_file_changed)
+        
         self.setup_styles()
         self.setAcceptDrops(True)
         self.init_ui()
@@ -1756,55 +1699,7 @@ class ParaFileManager(QMainWindow):
         v_splitter.addWidget(self._create_bottom_pane())
         v_splitter.setSizes([180, 720])
 
-    # # In class ParaFileManager, update this method
-    # def _create_top_bar(self):
-    #     top_bar_layout = QHBoxLayout()
-    #     self.search_bar = QLineEdit()
-    #     self.search_bar.setPlaceholderText("Search all files and folders...")
-    #     self.search_bar.setMinimumWidth(450)
-    #     # self.search_bar.textChanged.connect(self.handle_search)
-        
-    #     self.search_bar.textChanged.connect(self.on_search_text_changed) # <-- CHANGE THIS
-    #     top_bar_layout.addWidget(self.search_bar)
-        
-    #     top_bar_layout.addWidget(self.search_bar)
-        
-    #     top_bar_layout.addStretch(1)
-        
-    #     style = self.style()
-        
-        
-    #     scan_button = QPushButton()
-    #     scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
-    #     scan_button.setToolTip("Find all duplicate files in your PARA structure")
-    #     scan_button.clicked.connect(self.start_full_scan)
-        
-        
-        
-    #     # --- START OF ADDED CODE ---
-    #     about_button = QPushButton()
-    #     about_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
-    #     about_button.setToolTip("About this application")
-    #     about_button.clicked.connect(self.open_about_dialog)
-    #     # --- END OF ADDED CODE ---
-
-    #     settings_button = QPushButton()
-    #     settings_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
-    #     settings_button.setToolTip("Open Settings")
-    #     settings_button.clicked.connect(self.open_settings_dialog)
-
-    #     log_button = QPushButton()
-    #     log_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
-    #     log_button.setToolTip("View Logs")
-    #     log_button.clicked.connect(self.open_log_viewer)
-        
-    #     top_bar_layout.addWidget(scan_button)
-    #     top_bar_layout.addWidget(about_button) # <-- ADD THIS LINE
-    #     top_bar_layout.addWidget(settings_button)
-    #     top_bar_layout.addWidget(log_button)
-    #     return top_bar_layout
-    #--- In ParaFileManager, REPLACE this method ---
-
+    
     def _create_top_bar(self):
         top_bar_layout = QHBoxLayout()
         self.search_bar = QLineEdit()
@@ -1947,47 +1842,7 @@ class ParaFileManager(QMainWindow):
         layout.addSpacing(20)
         layout.addWidget(open_settings_button, alignment=Qt.AlignmentFlag.AlignCenter)
         return widget
-# --- REPLACE your _create_tree_view method with this one ---
-    # def _create_tree_view(self):
-    #     # Use our new ThemedTreeView class
-    #     tree_view = ThemedTreeView(self)
-    #     self.file_system_model = QFileSystemModel()
-    #     self.file_system_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.AllEntries)
-    #     tree_view.setModel(self.file_system_model)
-    #     tree_view.setSortingEnabled(True)
-    #     tree_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        
-    #     # Connect the clicked signal to update the background
-    #     tree_view.clicked.connect(self.on_tree_item_clicked)
-        
-    #     return tree_view
-    
-    
-    #--- REPLACE your _create_tree_view method with this one ---
 
-# --- REPLACE your _create_tree_view method with this one ---
-
-    # def _create_tree_view(self):
-    #     tree_view = ThemedTreeView(self) # Or DropTreeView if you reverted
-    #     self.file_system_model = QFileSystemModel()
-    #     self.file_system_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.AllEntries)
-    #     tree_view.setModel(self.file_system_model)
-    #     tree_view.setSortingEnabled(True)
-    #     tree_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        
-    #     # --- ENABLE DRAG AND DROP ---
-    #     tree_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection) # Allow multi-select
-    #     tree_view.setDragEnabled(True)
-    #     tree_view.setAcceptDrops(True)
-    #     tree_view.setDropIndicatorShown(True)
-    #     # --- END ENABLE ---
-        
-    #     tree_view.clicked.connect(self.on_tree_item_clicked)
-    #     return tree_view
-    
-    # --- In ParaFileManager, ensure your _create_tree_view method is correct ---
-
-# --- In ParaFileManager, REPLACE the _create_tree_view method ---
 
     def _create_tree_view(self):
         tree_view = ThemedTreeView(self) # Or DropTreeView if you reverted
@@ -2010,57 +1865,6 @@ class ParaFileManager(QMainWindow):
         
         return tree_view
     
-    # # --- ADD THIS NEW HELPER METHOD TO THE ParaFileManager CLASS ---
-
-    # def _build_context_menu(self, path):
-    #     """Builds a context menu for a given file/folder path."""
-    #     menu = QMenu()
-    #     if not path or not os.path.exists(path):
-    #         return menu # Return an empty menu if path is invalid
-
-    #     style = self.style()
-        
-    #     # Determine the target directory for new items
-    #     target_dir = path if os.path.isdir(path) else os.path.dirname(path)
-            
-    #     # "New" Submenu
-    #     new_menu = QMenu("New", menu)
-    #     new_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder))
-    #     folder_action = new_menu.addAction("Folder..."); folder_action.triggered.connect(lambda: self.create_new_folder(target_dir))
-    #     file_action = new_menu.addAction("File..."); file_action.triggered.connect(lambda: self.create_new_file(target_dir))
-    #     menu.addMenu(new_menu)
-    #     menu.addSeparator()
-
-    #     # "Move To..." Submenu
-    #     current_category = self.get_category_from_path(path)
-    #     if current_category:
-    #         move_menu = QMenu("Move To...", menu)
-    #         move_menu.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
-    #         icons = {name: frame.findChild(QLabel).pixmap() for name, frame in self.drop_frames.items()}
-    #         for cat_name in self.para_folders.keys():
-    #             action = QAction(QIcon(icons.get(cat_name)), cat_name, self)
-    #             if cat_name == current_category:
-    #                 action.setEnabled(False); action.setToolTip(f"Item is already in {cat_name}")
-    #             else:
-    #                 action.triggered.connect(lambda checked, p=path, cat=cat_name: self.handle_move_to_category(p, cat))
-    #             move_menu.addAction(action)
-    #         menu.addMenu(move_menu)
-    #         menu.addSeparator()
-
-    #     # Standard Actions
-    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "Open", lambda: self.open_item(path))
-    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer", lambda: self.show_in_explorer(path))
-    #     menu.addSeparator()
-        
-    #     # Get QModelIndex for rename/delete if possible (for tree view)
-    #     index = self.file_system_model.index(path)
-    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "Rename...", lambda: self.rename_item(index))
-    #     menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon), "Delete...", lambda: self.delete_item(index))
-        
-    #     return menu
-    
-    # --- REPLACE your _build_context_menu method with this one ---
-
     def _build_context_menu(self, path):
         """Builds a context menu for a given file/folder path."""
         menu = QMenu()
@@ -2154,22 +1958,7 @@ class ParaFileManager(QMainWindow):
         elif level == "error": self.logger.error(message)
         QApplication.processEvents()
 
-    # def run_task(self, task_func, on_success, **kwargs):
-    #     if self.worker and self.worker.isRunning():
-    #         self.log_and_show("A background task is already running.", "warn")
-    #         return
-    #     self.progress = QProgressDialog("Preparing task...", "Cancel", 0, 100, self)
-    #     self.progress.setMinimumWidth(550)
-    #     self.progress.setWindowModality(Qt.WindowModality.WindowModal)
-    #     self.progress.canceled.connect(self.cancel_task)
-    #     self.progress.show()
-        
-    #     self.worker = Worker(task_func, **kwargs)
-    #     self.worker.result.connect(on_success)
-    #     self.worker.error.connect(self.on_task_error)
-    #     self.worker.progress.connect(self.update_progress)
-    #     self.worker.finished.connect(self.on_task_truly_finished)
-    #     self.worker.start()
+    
 
     def run_task(self, task_func, on_success, **kwargs):
         """
@@ -2226,11 +2015,7 @@ class ParaFileManager(QMainWindow):
             self.progress.setMaximum(total)
             self.progress.setValue(current)
 
-    # def on_task_error(self, error_message):
-    #     if self.progress: self.progress.close()
-    #     # 生产环境不显示
-    #     # self.log_and_show("ERROR: A background task failed. Check logs for details.", "error")
-    #     # self.logger.error(f"Background task failed: {error_message}", exc_info=False)
+
     def on_task_error(self, error_message):
         if self.progress: self.progress.close()
         self.logger.error(f"Background task failed: {error_message}", exc_info=False)
@@ -2244,25 +2029,7 @@ class ParaFileManager(QMainWindow):
         self.worker = None
         # We don't show "Task Finished" here anymore, as specific callbacks handle it.
     
-    # --- ADD this new method to the ParaFileManager class ---
-    #--- In the ParaFileManager class, REPLACE the on_tree_item_clicked method ---
 
-    # def on_tree_item_clicked(self, index):
-    #     """When an item is clicked, update the tree view's background icon."""
-    #     path = self.file_system_model.filePath(index)
-    #     category = self.get_category_from_path(path)
-        
-    #     if category and category in self.para_category_icons:
-    #         # A PARA category was clicked, set its icon as the background
-    #         # Use the new, clearer method name: setBackgroundIcon
-    #         self.tree_view.setBackgroundIcon(self.para_category_icons[category])
-    #     else:
-    #         # Not in a PARA category, clear the background
-    #         self.tree_view.setBackgroundIcon(None)
-    
-    
-    
-    #--- ADD this method back to the ParaFileManager class ---
 
     def on_tree_item_clicked(self, index):
         """When an item is clicked, update the tree view's background text."""
@@ -2277,18 +2044,7 @@ class ParaFileManager(QMainWindow):
             self.tree_view.setBackgroundText("")
             
             
-    # def on_tree_item_clicked(self, index):
-    #     """When an item is clicked, update the tree view's background icon."""
-    #     path = self.file_system_model.filePath(index)
-    #     category = self.get_category_from_path(path)
-        
-    #     if category and category in self.para_category_icons:
-    #         # A PARA category was clicked, set its icon as the background
-    #         self.tree_view.setBackgroundPixmap(self.para_category_icons[category])
-    #     else:
-    #         # Not in a PARA category, clear the background
-    #         self.tree_view.setBackgroundPixmap(None)
-            
+    #
     # --- Core Logic with New Transparent Workflow ---
     def reload_configuration(self):
         self.log_and_show("Reloading configuration...", "info", 2000)
@@ -2350,69 +2106,26 @@ class ParaFileManager(QMainWindow):
             self.tree_view.hideColumn(i)
         
         self.log_and_show(f"Configuration loaded. Root: {self.base_dir}", "info")
-        # self.run_task(self._task_rebuild_file_index, on_success=lambda r: self.log_and_show(r, "info", 2000))
-        self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
         
-    
-    # #--- REPLACE THE EXISTING process_dropped_items FUNCTION WITH THIS ONE ---
+        
+        
+        try:
+            # Check if cache is valid by comparing directory modification time
+            cache_stat = os.stat(self.index_cache_path)
+            dir_stat = os.stat(self.base_dir)
+            if cache_stat.st_mtime > dir_stat.st_mtime:
+                self.logger.info("Valid cache found, loading index from cache.")
+                with open(self.index_cache_path, 'r', encoding='utf-8') as f:
+                    self.file_index = json.load(f)
+                self.on_index_rebuilt(self.file_index) # Directly use the cached data
+                self.setup_file_watcher() # Start monitoring for changes
+                return # Skip the background task
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            self.logger.info("No valid cache found. Performing full re-index.")
+        
+        self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
 
-    # def process_dropped_items(self, dropped_paths, category_name):
-    #     if not self.base_dir:
-    #         self.log_and_show("Please set a base directory first.", "warn")
-    #         return
 
-    #     dest_root = os.path.join(self.base_dir, self.para_folders[category_name])
-    #     os.makedirs(dest_root, exist_ok=True)
-
-    #     # --- NEW LOGIC: Determine how to handle folders ---
-    #     folder_handling_mode = "merge" # Default behavior
-    #     dropped_folders = [p for p in dropped_paths if os.path.isdir(p)]
-    #     dropped_files = [p for p in dropped_paths if os.path.isfile(p)]
-
-    #     if dropped_folders:
-    #         dialog = FolderDropDialog(len(dropped_folders), len(dropped_files), self)
-    #         if not dialog.exec():
-    #             self.log_and_show("Operation cancelled.", "warn")
-    #             return
-    #         folder_handling_mode = dialog.result
-
-    #     # --- PATH 1: User chose "Move Folders As-Is" ---
-    #     if folder_handling_mode == "move_as_is":
-    #         self.log_and_show("Moving files and folders as-is...", "info")
-    #         self.run_task(self._task_process_hybrid_drop, on_success=self.on_final_refresh_finished,
-    #                       dropped_paths=dropped_paths, # Pass the original list
-    #                       dest_root=dest_root,
-    #                       category_name=category_name)
-    #         return
-
-    #     # --- PATH 2: User chose "Merge" or only dropped files (Original Logic) ---
-    #     # If we reach here, we are flattening all folders and processing only files.
-    #     if os.listdir(dest_root):
-    #         dialog = PreOperationDialog(self.para_folders[category_name], self)
-    #         if not dialog.exec():
-    #             self.log_and_show("Operation cancelled.", "warn")
-    #             return
-
-    #         if dialog.result == "skip":
-    #             self.run_task(self._task_process_simple_drop, on_success=self.on_final_refresh_finished,
-    #                           dropped_paths=dropped_paths, dest_root=dest_root, category_name=category_name)
-    #         elif dialog.result == "scan":
-    #             hash_dialog = HashingSelectionDialog(dest_root, self)
-    #             if not hash_dialog.exec():
-    #                 self.log_and_show("Operation cancelled.", "warn")
-    #                 return
-                
-    #             files_to_hash_dest = hash_dialog.get_checked_files()
-    #             on_scan_completed_with_context = partial(self.on_scan_completed, dest_root=dest_root, category_name=category_name)
-    #             self.run_task(self._task_scan_for_duplicates, on_success=on_scan_completed_with_context,
-    #                           source_paths=dropped_paths, files_to_hash_dest=files_to_hash_dest)
-    #     else:
-    #         # Destination is empty, fast merge/move
-    #         self.log_and_show("Destination is empty, performing fast merge of contents.", "info")
-    #         self.run_task(self._task_process_simple_drop, on_success=self.on_final_refresh_finished,
-    #                       dropped_paths=dropped_paths, dest_root=dest_root, category_name=category_name)
-
-# --- In ParaFileManager, REPLACE your entire process_dropped_items method with this one ---
 
     def process_dropped_items(self, dropped_paths, category_name, specific_target_dir=None):
         if not self.base_dir:
@@ -2504,121 +2217,168 @@ class ParaFileManager(QMainWindow):
     
     #--- REPLACE your on_index_rebuilt method with this one ---
 
+    # def on_index_rebuilt(self, index_data):
+    #     """This slot runs in the main thread to receive index results and update the UI."""
+    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
+    #     self.file_index = index_data
+    #     # Now it's safe to call perform_search to refresh the UI
+    #     self.perform_search()
+
+# In ParaFileManager, REPLACE this method
+
+
+
+    def setup_file_watcher(self):
+        """Sets up the QFileSystemWatcher to monitor the PARA directory."""
+        self.logger.info("Setting up file system watcher...")
+        
+        # Remove old paths before adding new ones
+        if self.file_watcher.directories():
+            self.file_watcher.removePaths(self.file_watcher.directories())
+            
+        paths_to_watch = {self.base_dir}
+        for root, dirs, _ in os.walk(self.base_dir):
+            for d in dirs:
+                paths_to_watch.add(os.path.join(root, d))
+                
+        self.file_watcher.addPaths(list(paths_to_watch))
+        self.logger.info(f"Now monitoring {len(paths_to_watch)} directories for real-time changes.")
+
+    # def on_directory_changed(self, path):
+    #     """A directory has been modified (file added/deleted/renamed)."""
+    #     self.logger.info(f"Directory change detected: {path}. Triggering a debounced re-index.")
+    #     # Use the search timer to "debounce" rapid changes.
+    #     # This prevents re-indexing multiple times if many files are changed at once.
+    #     if not self.search_timer.isActive():
+    #         self.log_and_show("File changes detected, updating index...", "info", 2000)
+    #     self.search_timer.start(3000) # Wait 3 seconds after last change to re-index
+    def on_directory_changed(self, path):
+        """A directory has been modified. Trigger the new debounced re-index timer."""
+        self.logger.info(f"Directory change detected: {path}. Triggering a debounced re-index.")
+        if not self.reindex_timer.isActive():
+            self.log_and_show("File changes detected, updating index in 3 seconds...", "info", 3000)
+        # Use the new, dedicated timer
+        self.reindex_timer.start(3000)
+
+    def on_file_changed(self, path):
+        """A single file's content has changed."""
+        self.logger.info(f"File content change detected: {path}. Updating its metadata.")
+        # Find and update the specific file in the index
+        for i, item in enumerate(self.file_index):
+            if item["path"] == path:
+                try:
+                    stat = os.stat(path)
+                    self.file_index[i]["mtime"] = stat.st_mtime
+                    self.file_index[i]["size"] = stat.st_size
+                    # No need for a full rebuild, just a small update
+                except FileNotFoundError:
+                    # The file was likely deleted, the directory change will handle it
+                    pass
+                break
+        
+    # def on_index_rebuilt(self, index_data):
+    #     """This slot runs in the main thread to receive index results and update the UI."""
+    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
+    #     self.file_index = index_data
+        
+    #     # --- NEW: Save to cache and setup watcher ---
+    #     try:
+    #         with open(self.index_cache_path, 'w', encoding='utf-8') as f:
+    #             json.dump(self.file_index, f)
+    #         self.logger.info(f"File index cache saved to {self.index_cache_path}")
+    #         self.setup_file_watcher() # Start monitoring AFTER a successful index
+    #     except Exception as e:
+    #         self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
+
+    #     self.perform_search() # Update search/UI
+
     def on_index_rebuilt(self, index_data):
         """This slot runs in the main thread to receive index results and update the UI."""
         self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
         self.file_index = index_data
-        # Now it's safe to call perform_search to refresh the UI
-        self.perform_search()
+        
+        try:
+            with open(self.index_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.file_index, f)
+            self.logger.info(f"File index cache saved to {self.index_cache_path}")
+            self.setup_file_watcher()
+        except Exception as e:
+            self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
+
+        # FIX: Directly switch to the tree view instead of calling perform_search
+        if not self.search_bar.text().strip():
+             self.bottom_pane.setCurrentWidget(self.tree_view)
     # --- Background Tasks (Workers) ---
     
     # --- ADD THIS NEW TASK to the ParaFileManager class ---
 
-# --- ADD this new method to the ParaFileManager class ---
 
+
+    # In class ParaFileManager, REPLACE this method
     def _calculate_retention_score(self, path):
-        """Calculates a score for a file path based on several heuristics."""
-        score = 0
-        reason = []
-        
-        filename = os.path.basename(path)
-        name_part, ext = os.path.splitext(filename)
+        """
+        Calculates a comprehensive retention score for a file path based on a rich set of heuristics.
+        A higher score means the file is more likely to be the one a user wants to keep.
+        """
+        score = 100  # Start with a baseline score
+        reasons = []
         path_lower = path.lower()
+        filename = os.path.basename(path_lower)
+        name_part, _ = os.path.splitext(filename)
 
-        # Rule 1: High score for readable words in the filename
-        words = re.findall(r'[a-zA-Z]{3,}', name_part)
+        # --- Path-Based Scoring ---
+        category = self.get_category_from_path(path)
+        if category == "Projects":
+            score += 50
+            reasons.append("(+50) In 'Projects' folder")
+        elif category == "Areas":
+            score += 30
+            reasons.append("(+30) In 'Areas' folder")
+        elif category == "Resources":
+            score += 10
+            reasons.append("(+10) In 'Resources' folder")
+        elif category == "Archives":
+            score -= 25
+            reasons.append("(-25) In 'Archives' folder")
+
+        # Penalize common temporary/unorganized locations
+        if any(temp_loc in path_lower for temp_loc in ['/downloads/', '/desktop/']):
+            score -= 40
+            reasons.append("(-40) Located in Downloads/Desktop")
+
+        # Penalize deep paths (shallower is better)
+        depth = path.count(os.sep) - self.base_dir.count(os.sep)
+        if depth > 5:
+            score -= depth * 3
+            reasons.append(f"(-{depth*3}) Deep path ({depth} levels)")
+
+        # --- Filename-Based Scoring ---
+        # Reward filenames with descriptive, readable words
+        words = re.findall(r'[a-zA-Z]{4,}', name_part)
         if len(words) > 1:
-            score += len(words) * 10
-            reason.append(f"{len(words)} readable words")
-
-        # Rule 2: Penalize deep paths
-        depth = path.count(os.sep)
-        score -= depth * 2
+            score += len(words) * 5
+            reasons.append(f"(+{len(words)*5}) Contains {len(words)} readable words")
         
-        # Rule 3: Penalize common "junk" folder names
-        junk_folders = ['temp', 'tmp', 'backup', 'cache', 'old']
-        if any(f'/{junk}/' in path_lower for junk in junk_folders):
-            score -= 50
-            reason.append("In a 'junk' folder (temp, backup, etc.)")
+        # Reward filenames with date patterns (ISO format is best)
+        if re.search(r'\d{4}-\d{2}-\d{2}', name_part):
+            score += 30
+            reasons.append("(+30) Contains YYYY-MM-DD date")
 
-        # Rule 4: Heavily penalize conflict/copy patterns
-        if re.search(r'(_copy)|(_conflict_)|(\(\d+\))', name_part.lower()):
+        # Heavily penalize filenames indicating they are copies or conflicts
+        if re.search(r'(_copy)|(_conflict)|(\(\d+\))|(_duplicate)', name_part):
             score -= 100
-            reason.append("Filename has a 'copy' or 'conflict' pattern")
+            reasons.append("(-100) Filename suggests it is a copy")
             
-        # Rule 5: Penalize long, non-word filenames (likely hashes)
-        if ' ' not in name_part and len(re.findall(r'\d', name_part)) > 5 and len(name_part) > 20:
-             score -= 75
-             reason.append("Filename appears to be a hash or ID")
+        # Penalize filenames that look like hashes or random strings
+        if len(name_part) > 30 and ' ' not in name_part and len(re.findall(r'\d', name_part)) > 8:
+            score -= 75
+            reasons.append("(-75) Filename appears to be a machine-generated ID")
 
-        # Return score and the most important reason
-        return score, reason[0] if reason else "Standard file"
-# --- In ParaFileManager, REPLACE this method ---
+        # Combine reasons for a clear explanation
+        reason_str = ", ".join(reasons) if reasons else "Standard file"
+        return score, reason_str
 
-    # def _task_full_deduplication_scan(self, progress_callback):
-    #     """
-    #     Scans the entire base directory for duplicates, but now intelligently
-    #     filters out common development and system folders/files.
-    #     """
-    #     if not self.base_dir:
-    #         return {}
-        
-    #     self.logger.info("Starting full deduplication scan of entire PARA structure...")
-    #     all_files = get_all_files_in_paths([self.base_dir])
-    #     progress_callback("Discovering all files...", 0, len(all_files))
 
-    #     # --- NEW: Smart Filtering Algorithm ---
-    #     # Define folders and file extensions to completely ignore during the scan.
-    #     # Based on common .gitignore patterns.
-    #     ignore_dirs = {
-    #         '.git', '.svn', '.hg', 'node_modules', 'venv', 'env', '.env',
-    #         '__pycache__', 'dist', 'build', 'target', 'out', 'bin', 'obj',
-    #         '.idea', '.vscode', 'site-packages', 'lib'
-    #     }
-    #     ignore_exts = {'.log', '.tmp', '.bak', '.swp', '.lock', '.pyc', '.o', '.so'}
-    #     ignore_files = {'.DS_Store'}
-
-    #     filtered_files = []
-    #     for path in all_files:
-    #         if os.path.basename(path) in ignore_files:
-    #             continue
-    #         if os.path.splitext(path)[1] in ignore_exts:
-    #             continue
-            
-    #         # Check if any part of the path is an ignored directory
-    #         path_parts = set(path.split(os.sep))
-    #         if not path_parts.isdisjoint(ignore_dirs):
-    #             continue
-            
-    #         filtered_files.append(path)
-        
-    #     original_count = len(all_files)
-    #     filtered_count = len(filtered_files)
-    #     self.logger.info(f"Discovered {original_count} total files. Filtered out {original_count - filtered_count} development/system files.")
-    #     # --- END: Smart Filtering ---
-
-    #     total_to_hash = len(filtered_files)
-    #     hashes = {}
-    #     for i, file_path in enumerate(filtered_files): # Now iterate over the clean list
-    #         progress_callback(f"Hashing: {os.path.basename(file_path)}", i + 1, total_to_hash)
-            
-    #         try:
-    #             if os.path.getsize(file_path) < 4096: # Ignore files smaller than 4KB
-    #                 continue
-    #         except FileNotFoundError:
-    #             continue
-            
-    #         file_hash = calculate_hash(file_path)
-    #         if file_hash:
-    #             if file_hash not in hashes:
-    #                 hashes[file_hash] = []
-    #             hashes[file_hash].append(file_path)
-
-    #     duplicate_sets = {hash_val: paths for hash_val, paths in hashes.items() if len(paths) > 1}
-    #     self.logger.info(f"Full scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
-        
-    #     return duplicate_sets
-    
 
 # --- In ParaFileManager, ensure this method is up-to-date ---
 
@@ -2701,46 +2461,7 @@ class ParaFileManager(QMainWindow):
         
         return "Internal move operation complete."
     
-    # def _task_scan_for_duplicates(self, progress_callback, source_paths, files_to_hash_dest):
-    #     source_files = get_all_files_in_paths(source_paths)
-    #     total_work = len(files_to_hash_dest) + len(source_files)
-    #     current_work = 0
-    #     self.logger.info(f"Starting Smart Scan. Total work units: {total_work}.")
 
-    #     self.logger.info(f"Phase 1: Hashing {len(files_to_hash_dest)} destination files.")
-    #     dest_hashes = {}
-    #     for f in files_to_hash_dest:
-    #         progress_callback(f"Hashing destination: {os.path.basename(f)}", current_work, total_work)
-    #         self.logger.info(f"Hashing destination file: {f}")
-    #         if (file_hash := calculate_hash(f)):
-    #             dest_hashes[file_hash] = f
-    #         current_work += 1
-
-    #     self.logger.info(f"Phase 2: Checking {len(source_files)} source files for duplicates.")
-    #     duplicates, non_duplicates = [], []
-    #     # Pre-calculating sizes of destination files for a small speed boost
-    #     dest_size_to_hash = {}
-    #     for h, p in dest_hashes.items():
-    #         try: dest_size_to_hash[os.path.getsize(p)] = h
-    #         except FileNotFoundError: continue
-
-    #     for f in source_files:
-    #         progress_callback(f"Checking source file: {os.path.basename(f)}", current_work, total_work)
-    #         try:
-    #             size = os.path.getsize(f)
-    #             if size in dest_size_to_hash:
-    #                 self.logger.info(f"Hashing source (size match): {f}")
-    #                 file_hash = calculate_hash(f)
-    #                 if file_hash and file_hash in dest_hashes:
-    #                     self.logger.info(f"DUPLICATE FOUND: Source '{f}' matches destination '{dest_hashes[file_hash]}'")
-    #                     duplicates.append((f, dest_hashes[file_hash], file_hash))
-    #                 else: non_duplicates.append(f)
-    #             else: non_duplicates.append(f)
-    #         except FileNotFoundError: self.logger.warn(f"Source file not found, skipping: {f}")
-    #         current_work += 1
-        
-    #     self.logger.info(f"Scan complete. Found {len(duplicates)} duplicates.")
-    #     return {"duplicates": duplicates, "non_duplicates": non_duplicates}
 
 #--- In ParaFileManager, REPLACE this method ---
 
@@ -2837,62 +2558,6 @@ class ParaFileManager(QMainWindow):
             except Exception as e:
                 self.logger.warn(f"Could not remove source directory {folder}: {e}")
         return "Fast Move complete."
-
-# # --- In ParaFileManager, REPLACE this method ---
-
-#     def _task_process_final_drop(self, progress_callback, dropped_paths, dest_root, choices, category_name):
-#         total = len(dropped_paths)
-#         self.logger.info(f"Starting final processing of {total} files to {dest_root}")
-        
-#         for i, old_path in enumerate(dropped_paths):
-#             progress_callback(f"Processing: {os.path.basename(old_path)}", i + 1, total)
-#             choice = choices.get(old_path)
-            
-#             if choice == "delete":
-#                 try:
-#                     os.remove(old_path)
-#                     self.logger.info(f"User choice: Deleting duplicate source file: {old_path}")
-#                 except Exception as e:
-#                     self.logger.error(f"Failed to delete {old_path}", exc_info=True)
-#                 continue
-            
-#             filename, final_dest_path = os.path.basename(old_path), dest_root
-#             for rule in self.rules:
-#                 if rule.get("category") == category_name and self.check_rule(rule, filename):
-#                     action, value = rule.get("action"), rule.get("action_value")
-#                     if action == "subfolder": final_dest_path = os.path.join(dest_root, value)
-#                     elif action == "prefix": filename = f"{value}{filename}"
-#                     self.logger.info(f"Applying rule '{action}' to '{os.path.basename(old_path)}'")
-#                     break
-            
-#             new_path = os.path.join(final_dest_path, filename)
-#             if choice == "keep":
-#                 base, ext = os.path.splitext(new_path); counter = 1
-#                 while os.path.exists(new_path): new_path = f"{base}_duplicate_{counter}{ext}"; counter += 1
-#                 self.logger.info(f"User choice: Keeping duplicate '{filename}', renaming to '{os.path.basename(new_path)}'")
-            
-#             try:
-#                 os.makedirs(os.path.dirname(new_path), exist_ok=True)
-#                 shutil.move(old_path, new_path)
-#             except Exception as e:
-#                 # --- THIS IS THE FIX ---
-#                 # Added exc_info=True to log the full traceback and find the root cause.
-#                 self.logger.error(f"Failed to move {old_path}", exc_info=True)
-
-#         self.logger.info("Cleaning up empty source directories...")
-#         protected_paths = {os.path.normpath(os.path.join(self.base_dir, d)) for d in self.para_folders.values()}
-#         moved_paths = [p for p in dropped_paths if choices.get(p) != "delete"]
-#         source_dirs = {os.path.dirname(p) for p in moved_paths}
-#         for folder in sorted(source_dirs, key=len, reverse=True):
-#             try:
-#                 if os.path.normpath(folder) in protected_paths: continue
-#                 if not os.listdir(folder):
-#                     self.logger.info(f"Removing empty source directory: {folder}")
-#                     shutil.rmtree(folder)
-#             except Exception as e:
-#                 self.logger.warn(f"Could not remove source directory {folder}: {e}")
-
-#         return "File processing complete."
 
 
 
@@ -3058,7 +2723,13 @@ class ParaFileManager(QMainWindow):
 
     def on_search_text_changed(self):
         """Restarts the debounce timer every time the user types."""
-        self.search_timer.start(300)  # Wait 300ms after last keystroke
+        # Check if the search term is a special command
+        if self.search_bar.text().strip() == ":reindex":
+            self.log_and_show("Manual re-index triggered!", "info")
+            self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
+            return
+            
+        self.search_timer.start(300) # 300ms for search, 3000ms for file changes
     
     
     # --- REPLACE the _load_para_icons method ---
@@ -3096,101 +2767,174 @@ class ParaFileManager(QMainWindow):
             if not loaded_successfully:
                 self.para_category_icons[category] = style.standardIcon(default_enum)
 
-# --- REPLACE the open_settings_dialog method ---
+    # --- ADD these THREE new methods for pagination logic ---
 
+    # def go_to_next_page(self):
+    #     if (self.current_search_page + 1) * self.RESULTS_PER_PAGE < len(self.current_search_results):
+    #         self.current_search_page += 1
+    #         self.display_search_page()
+
+    # def go_to_previous_page(self):
+    #     if self.current_search_page > 0:
+    #         self.current_search_page -= 1
+    #         self.display_search_page()
+
+
+
+
+# Immediately after the on_search_text_changed method, add these four methods:
 
     # def perform_search(self):
     #     """
-    #     The actual search and UI update logic, executed after the debounce delay.
-    #     This is the fully optimized version of the old `handle_search`.
+    #     Performs a search, stores all results, and displays the first page.
+    #     This is also called by the file watcher's debounced timer.
     #     """
-    #     term = self.search_bar.text().lower().strip()
+    #     # If the timer was fired by a file change, the search bar might be empty.
+    #     # In that case, we should just re-index.
+    #     if self.search_bar.text().strip() == "":
+    #         if self.bottom_pane.currentWidget() != self.welcome_widget:
+    #             self.logger.info("Debounced timer fired for file change, re-indexing...")
+    #             self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
+    #         return
 
+    #     # --- Normal Search Logic ---
+    #     term = self.search_bar.text().lower().strip()
     #     if not term:
+    #         self.current_search_results = []
     #         if self.base_dir:
     #             self.bottom_pane.setCurrentWidget(self.tree_view)
     #         else:
     #             self.bottom_pane.setCurrentWidget(self.welcome_widget)
     #         return
 
-    #     self.bottom_pane.setCurrentWidget(self.search_results_list)
-    #     self.search_results_list.clear() # Clear previous results immediately
+    #     # Switch to the search results page (assuming it's the 3rd widget, index 2)
+    #     self.bottom_pane.setCurrentIndex(2)
 
-    #     if not self.file_index:
-    #         return
-
-    #     # Perform the search in-memory (this is fast)
-    #     results = [item for item in self.file_index if term in item["name_lower"]]
+    #     if self.file_index:
+    #         self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+    #     else:
+    #         self.current_search_results = []
+            
+    #     self.current_search_page = 0
+    #     self.display_search_page()
+    
+    def perform_search(self):
+        """Performs a search based on the user's input."""
+        term = self.search_bar.text().lower().strip()
         
-    #     # If there are many results, inform the user and only show a portion
-    #     if len(results) > 100:
-    #         status_item = QListWidgetItem(f"Showing first 100 of {len(results)} results...")
-    #         status_item.setFlags(Qt.ItemFlag.NoItemFlags) # Make it unselectable
-    #         self.search_results_list.addItem(status_item)
+        # If the search bar is empty, just show the file tree
+        if not term:
+            self.current_search_results = []
+            if self.base_dir:
+                self.bottom_pane.setCurrentWidget(self.tree_view)
+            else:
+                self.bottom_pane.setCurrentWidget(self.welcome_widget)
+            return
 
-    #     file_icon_provider = QFileIconProvider()
-
-    #     # IMPORTANT: Limit the loop to a max of 50 items to keep the UI fluid
-    #     for item_data in results[:100]:
-    #         path = item_data["path"]
-    #         item_widget = QWidget()
-    #         item_layout = QHBoxLayout(item_widget)
-    #         item_layout.setContentsMargins(8, 8, 8, 8)
-    #         item_layout.setSpacing(12)
-
-    #         icon = file_icon_provider.icon(QFileInfo(path))
-    #         icon_label = QLabel()
-    #         icon_label.setPixmap(icon.pixmap(QSize(32, 32)))
+        # --- Perform the search ---
+        self.bottom_pane.setCurrentIndex(2) # Switch to the search results page
+        if self.file_index:
+            self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+        else:
+            self.current_search_results = []
             
-    #         rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
-    #         if rel_path == '.': rel_path = 'Root'
+        self.current_search_page = 0
+        self.display_search_page()
+
+    def display_search_page(self):
+        """Renders the current page of search results into the list widget."""
+        self.search_results_list.clear()
+
+        start_index = self.current_search_page * self.RESULTS_PER_PAGE
+        end_index = start_index + self.RESULTS_PER_PAGE
+        page_items = self.current_search_results[start_index:end_index]
+        
+        total_results = len(self.current_search_results)
+        total_pages = (total_results + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
+        if total_pages == 0: total_pages = 1
+
+        self.page_status_label.setText(f"Page {self.current_search_page + 1} of {total_pages} ({total_results} results)")
+        self.prev_page_button.setEnabled(self.current_search_page > 0)
+        self.next_page_button.setEnabled(end_index < total_results)
+        
+        file_icon_provider = QFileIconProvider()
+        para_icons = {name: icon.pixmap(40, 40) for name, icon in self.para_category_icons.items()}
+
+        for item_data in page_items:
+            path = item_data["path"]
+            item_widget = QWidget()
+            main_layout = QHBoxLayout(item_widget)
+            main_layout.setContentsMargins(8, 8, 8, 8)
+            main_layout.setSpacing(12)
+
+            file_type_icon = file_icon_provider.icon(QFileInfo(path))
+            file_type_label = QLabel()
+            file_type_label.setPixmap(file_type_icon.pixmap(QSize(32, 32)))
             
-    #         text_html = f"""
-    #         <div>
-    #             <span id='SearchResultName'>{os.path.basename(path)}</span><br>
-    #             <span id='SearchResultPath'>{rel_path}</span>
-    #         </div>
-    #         """
-    #         info_label = QLabel(text_html)
-    #         info_label.setWordWrap(True)
-
-    #         formatted_size = format_size(item_data['size'])
-    #         mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+            details_layout = QVBoxLayout()
+            details_layout.setSpacing(2)
             
-    #         meta_html = f"""
-    #         <div style='text-align: right; font-size: 9pt;'>
-    #             {formatted_size} <br>
-    #             <span style='color: #98c379;'>Modified: {mtime_str}</span>
-    #         </div>
-    #         """
-    #         meta_label = QLabel(meta_html)
-    #         meta_label.setFixedWidth(160)
-    #         meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-    #         item_layout.addWidget(icon_label)
-    #         item_layout.addWidget(info_label, 1)
-    #         item_layout.addWidget(meta_label)
-
-    #         list_item = QListWidgetItem(self.search_results_list)
-    #         list_item.setData(Qt.ItemDataRole.UserRole, path)
-    #         list_item.setSizeHint(item_widget.sizeHint())
+            filename_label = QLabel(f"<span id='SearchResultName'>{os.path.basename(path)}</span>")
             
-    #         self.search_results_list.addItem(list_item)
-    #         self.search_results_list.setItemWidget(list_item, item_widget)
-    
-    
-    # --- ADD these THREE new methods for pagination logic ---
+            path_layout = QHBoxLayout()
+            path_layout.setSpacing(5)
+            
+            rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+            path_parts = rel_path.split(os.sep)
+            root_folder = path_parts[0]
+            sub_path = os.path.join(*path_parts[1:]) if len(path_parts) > 1 else ""
 
+            category_name = self.folder_to_category.get(root_folder)
+            if category_name and category_name in para_icons:
+                root_icon_label = QLabel()
+                root_icon_label.setPixmap(para_icons[category_name])
+                path_layout.addWidget(root_icon_label)
+                path_layout.addWidget(QLabel("▶"))
+                path_text = sub_path
+            else:
+                path_text = rel_path
+
+            display_path = path_text.replace(os.sep, "  ▶  ")
+            path_label = QLabel(f"<span id='SearchResultPath'>{display_path}</span>")
+            
+            path_layout.addWidget(path_label)
+            path_layout.addStretch()
+
+            details_layout.addWidget(filename_label)
+            details_layout.addLayout(path_layout)
+            
+            formatted_size = format_size(item_data['size'])
+            mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+            meta_html = f"<div style='text-align: right; font-size: 9pt;'>{formatted_size} <br><span style='color: #98c379;'>Modified: {mtime_str}</span></div>"
+            meta_label = QLabel(meta_html)
+            meta_label.setFixedWidth(160)
+            meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            
+            main_layout.addWidget(file_type_label)
+            main_layout.addLayout(details_layout, 1)
+            main_layout.addWidget(meta_label)
+            
+            list_item = QListWidgetItem(self.search_results_list)
+            list_item.setData(Qt.ItemDataRole.UserRole, path)
+            list_item.setSizeHint(item_widget.sizeHint())
+            self.search_results_list.addItem(list_item)
+            self.search_results_list.setItemWidget(list_item, item_widget)
+            
     def go_to_next_page(self):
-        if (self.current_search_page + 1) * self.RESULTS_PER_PAGE < len(self.current_search_results):
+        """Moves to the next page of search results."""
+        total_pages = (len(self.current_search_results) + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
+        if self.current_search_page < total_pages - 1:
             self.current_search_page += 1
             self.display_search_page()
 
     def go_to_previous_page(self):
+        """Moves to the previous page of search results."""
         if self.current_search_page > 0:
             self.current_search_page -= 1
             self.display_search_page()
-
+            
+            
+            
     # def display_search_page(self):
     #     """Renders the current page of search results into the list widget."""
     #     self.search_results_list.clear()
@@ -3242,125 +2986,133 @@ class ParaFileManager(QMainWindow):
     
     # --- REPLACE your display_search_page method with this one ---
 
-    def display_search_page(self):
-        """Renders the current page of search results into the list widget."""
-        self.search_results_list.clear()
+    # def display_search_page(self):
+    #     """Renders the current page of search results into the list widget."""
+    #     self.search_results_list.clear()
 
-        start_index = self.current_search_page * self.RESULTS_PER_PAGE
-        end_index = start_index + self.RESULTS_PER_PAGE
-        page_items = self.current_search_results[start_index:end_index]
+    #     start_index = self.current_search_page * self.RESULTS_PER_PAGE
+    #     end_index = start_index + self.RESULTS_PER_PAGE
+    #     page_items = self.current_search_results[start_index:end_index]
         
-        total_results = len(self.current_search_results)
-        total_pages = (total_results + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
-        if total_pages == 0: total_pages = 1
+    #     total_results = len(self.current_search_results)
+    #     total_pages = (total_results + self.RESULTS_PER_PAGE - 1) // self.RESULTS_PER_PAGE
+    #     if total_pages == 0: total_pages = 1
 
-        self.page_status_label.setText(f"Page {self.current_search_page + 1} of {total_pages} ({total_results} results)")
-        self.prev_page_button.setEnabled(self.current_search_page > 0)
-        self.next_page_button.setEnabled(end_index < total_results)
+    #     self.page_status_label.setText(f"Page {self.current_search_page + 1} of {total_pages} ({total_results} results)")
+    #     self.prev_page_button.setEnabled(self.current_search_page > 0)
+    #     self.next_page_button.setEnabled(end_index < total_results)
         
-        file_icon_provider = QFileIconProvider()
-        # Pre-fetch PARA category icons
-        # para_icons = {name: frame.findChild(QLabel).pixmap().scaled(45, 45, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) for name, frame in self.drop_frames.items()}
+    #     file_icon_provider = QFileIconProvider()
+    #     # Pre-fetch PARA category icons
+    #     # para_icons = {name: frame.findChild(QLabel).pixmap().scaled(45, 45, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) for name, frame in self.drop_frames.items()}
         
-        # 40*40 is fixed size
-        para_icons = {name: icon.pixmap(40, 40) for name, icon in self.para_category_icons.items()}
+    #     # 40*40 is fixed size
+    #     para_icons = {name: icon.pixmap(40, 40) for name, icon in self.para_category_icons.items()}
 
-        for item_data in page_items:
-            path = item_data["path"]
+    #     for item_data in page_items:
+    #         path = item_data["path"]
             
-            # --- NEW DYNAMIC WIDGET CREATION ---
-            item_widget = QWidget()
-            # Main horizontal layout: File Icon | Details (V) | Metadata (V)
-            main_layout = QHBoxLayout(item_widget)
-            main_layout.setContentsMargins(8, 8, 8, 8)
-            main_layout.setSpacing(12)
+    #         # --- NEW DYNAMIC WIDGET CREATION ---
+    #         item_widget = QWidget()
+    #         # Main horizontal layout: File Icon | Details (V) | Metadata (V)
+    #         main_layout = QHBoxLayout(item_widget)
+    #         main_layout.setContentsMargins(8, 8, 8, 8)
+    #         main_layout.setSpacing(12)
 
-            # 1. Left side: File type icon
-            file_type_icon = file_icon_provider.icon(QFileInfo(path))
-            file_type_label = QLabel()
-            file_type_label.setPixmap(file_type_icon.pixmap(QSize(32, 32)))
+    #         # 1. Left side: File type icon
+    #         file_type_icon = file_icon_provider.icon(QFileInfo(path))
+    #         file_type_label = QLabel()
+    #         file_type_label.setPixmap(file_type_icon.pixmap(QSize(32, 32)))
             
-            # 2. Center: Vertical layout for Filename and new Path display
-            details_layout = QVBoxLayout()
-            details_layout.setSpacing(2)
+    #         # 2. Center: Vertical layout for Filename and new Path display
+    #         details_layout = QVBoxLayout()
+    #         details_layout.setSpacing(2)
             
-            # Filename
-            filename_label = QLabel(f"<span id='SearchResultName'>{os.path.basename(path)}</span>")
+    #         # Filename
+    #         filename_label = QLabel(f"<span id='SearchResultName'>{os.path.basename(path)}</span>")
             
-            # Path (New iconic layout)
-            path_layout = QHBoxLayout()
-            path_layout.setSpacing(5)
+    #         # Path (New iconic layout)
+    #         path_layout = QHBoxLayout()
+    #         path_layout.setSpacing(5)
             
-            rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
-            path_parts = rel_path.split(os.sep)
-            root_folder = path_parts[0]
-            sub_path = os.path.join(*path_parts[1:]) if len(path_parts) > 1 else ""
+    #         rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+    #         path_parts = rel_path.split(os.sep)
+    #         root_folder = path_parts[0]
+    #         sub_path = os.path.join(*path_parts[1:]) if len(path_parts) > 1 else ""
 
-            category_name = self.folder_to_category.get(root_folder)
-            if category_name and category_name in para_icons:
-                # It's a PARA folder, use the icon
-                root_icon_label = QLabel()
-                root_icon_label.setPixmap(para_icons[category_name])
-                path_layout.addWidget(root_icon_label)
-                # Use a prettier separator
-                path_layout.addWidget(QLabel("▶"))
-                path_text = sub_path
-            else:
-                # Not a standard PARA folder, just show the text
-                path_text = rel_path
+    #         category_name = self.folder_to_category.get(root_folder)
+    #         if category_name and category_name in para_icons:
+    #             # It's a PARA folder, use the icon
+    #             root_icon_label = QLabel()
+    #             root_icon_label.setPixmap(para_icons[category_name])
+    #             path_layout.addWidget(root_icon_label)
+    #             # Use a prettier separator
+    #             path_layout.addWidget(QLabel("▶"))
+    #             path_text = sub_path
+    #         else:
+    #             # Not a standard PARA folder, just show the text
+    #             path_text = rel_path
 
-            # path_label = QLabel(f"<span id='SearchResultPath'>{path_text}</span>")
-            display_path = path_text.replace(os.sep, "  ▶  ")
-            path_label = QLabel(f"<span id='SearchResultPath'>{display_path}</span>")
+    #         # path_label = QLabel(f"<span id='SearchResultPath'>{path_text}</span>")
+    #         display_path = path_text.replace(os.sep, "  ▶  ")
+    #         path_label = QLabel(f"<span id='SearchResultPath'>{display_path}</span>")
             
-            path_layout.addWidget(path_label)
-            path_layout.addStretch()
+    #         path_layout.addWidget(path_label)
+    #         path_layout.addStretch()
 
-            details_layout.addWidget(filename_label)
-            details_layout.addLayout(path_layout)
+    #         details_layout.addWidget(filename_label)
+    #         details_layout.addLayout(path_layout)
             
-            # 3. Right side: Metadata
-            formatted_size = format_size(item_data['size'])
-            mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
-            meta_html = f"<div style='text-align: right; font-size: 9pt;'>{formatted_size} <br><span style='color: #98c379;'>Modified: {mtime_str}</span></div>"
-            meta_label = QLabel(meta_html)
-            meta_label.setFixedWidth(160)
-            meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    #         # 3. Right side: Metadata
+    #         formatted_size = format_size(item_data['size'])
+    #         mtime_str = datetime.fromtimestamp(item_data['mtime']).strftime('%Y-%m-%d %H:%M')
+    #         meta_html = f"<div style='text-align: right; font-size: 9pt;'>{formatted_size} <br><span style='color: #98c379;'>Modified: {mtime_str}</span></div>"
+    #         meta_label = QLabel(meta_html)
+    #         meta_label.setFixedWidth(160)
+    #         meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             
-            # Assemble main layout
-            main_layout.addWidget(file_type_label)
-            main_layout.addLayout(details_layout, 1) # The '1' makes this section stretch
-            main_layout.addWidget(meta_label)
+    #         # Assemble main layout
+    #         main_layout.addWidget(file_type_label)
+    #         main_layout.addLayout(details_layout, 1) # The '1' makes this section stretch
+    #         main_layout.addWidget(meta_label)
             
-            # Add to list
-            list_item = QListWidgetItem(self.search_results_list)
-            list_item.setData(Qt.ItemDataRole.UserRole, path)
-            list_item.setSizeHint(item_widget.sizeHint())
-            self.search_results_list.addItem(list_item)
-            self.search_results_list.setItemWidget(list_item, item_widget)
-            
-# --- And REPLACE perform_search with this new version ---
+    #         # Add to list
+    #         list_item = QListWidgetItem(self.search_results_list)
+    #         list_item.setData(Qt.ItemDataRole.UserRole, path)
+    #         list_item.setSizeHint(item_widget.sizeHint())
+    #         self.search_results_list.addItem(list_item)
+    #         self.search_results_list.setItemWidget(list_item, item_widget)
+    
+    # def perform_search(self):
+    #     """
+    #     Performs a search, stores all results, and displays the first page.
+    #     """
+        
+    #     if self.search_bar.text().strip() == "":
+    #         if self.bottom_pane.currentWidget() == self.welcome_widget:
+    #             # Nothing to do if we are on the welcome screen
+    #             return
+    #         # If the search bar is empty, the timer was likely triggered by a file change.
+    #         self.logger.info("Debounced timer fired, re-indexing...")
+    #         self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
+    #         return
+    
+    #     term = self.search_bar.text().lower().strip()
+    #     if not term:
+    #         self.current_search_results = []
+    #         if self.base_dir: self.bottom_pane.setCurrentWidget(self.tree_view)
+    #         else: self.bottom_pane.setCurrentWidget(self.welcome_widget)
+    #         return
 
-    def perform_search(self):
-        """
-        Performs a search, stores all results, and displays the first page.
-        """
-        term = self.search_bar.text().lower().strip()
-        if not term:
-            self.current_search_results = []
-            if self.base_dir: self.bottom_pane.setCurrentWidget(self.tree_view)
-            else: self.bottom_pane.setCurrentWidget(self.welcome_widget)
-            return
+    #     self.bottom_pane.setCurrentWidget(self.bottom_pane.findChild(QWidget, 'SearchPageWidget') or self.search_results_list.parentWidget())
 
-        self.bottom_pane.setCurrentWidget(self.bottom_pane.findChild(QWidget, 'SearchPageWidget') or self.search_results_list.parentWidget())
-
-        if self.file_index:
-            self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
-        else:
-            self.current_search_results = []
+    #     if self.file_index:
+    #         self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+    #     else:
+    #         self.current_search_results = []
             
-        self.current_search_page = 0
-        self.display_search_page()
+    #     self.current_search_page = 0
+    #     self.display_search_page()
 
 # --- In ParaFileManager, REPLACE your show_move_to_dialog method with this one ---
 
