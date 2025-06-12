@@ -491,6 +491,13 @@ class FullScanResultDialog(QDialog):
         
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
+        
+
+
+        # self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
+        
+        
         main_layout.addWidget(self.tree)
         
         button_box = QHBoxLayout()
@@ -511,6 +518,25 @@ class FullScanResultDialog(QDialog):
         self.confirm_button.clicked.connect(self.accept)
         cancel_button.clicked.connect(self.reject)
 
+    def show_tree_context_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        # Only show menu for actual file items (which have a parent), not group headers.
+        if not item or not item.parent():
+            return
+            
+        file_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not file_data: return
+        path = file_data.get("path")
+        if not path: return
+
+        menu = QMenu()
+        style = self.style()
+        show_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+        
+        action = menu.exec(self.tree.mapToGlobal(pos))
+
+        if action == show_action:
+            self.main_window.show_in_explorer(path)
     def populate_tree_and_set_defaults(self):
         for group_data in self.processed_sets:
             group_header = QTreeWidgetItem(self.tree)
@@ -788,6 +814,7 @@ class ParaFileManager(QMainWindow):
         self.folder_to_category = {v: k for k, v in self.para_folders.items()}
         self.para_category_icons = {}
         self.rules = []
+        self.scan_rules = {} # <-- ADD THIS LINE
         self.move_to_history = []
         
         # --- GPU & Caching Properties ---
@@ -1403,7 +1430,23 @@ class ParaFileManager(QMainWindow):
             # Not in a PARA category, clear the background text
             self.tree_view.setBackgroundText("")
             
-            
+
+
+    def _load_scan_rules(self):
+        """Loads the developer-aware scan exclusion rules from JSON."""
+        try:
+            with open(resource_path("scan_rules.json"), "r", encoding="utf-8") as f:
+                self.scan_rules = json.load(f)
+            self.logger.info("Successfully loaded developer-aware scan rules.")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            self.logger.warn(f"scan_rules.json not found or invalid. Scan may include dev files. Error: {e}")
+            self.scan_rules = {
+                "excluded_dir_names": [],
+                "excluded_dir_paths_contain": [],
+                "excluded_extensions": [],
+                "excluded_filenames": []
+            }
+              
     #
     # --- Core Logic with New Transparent Workflow ---
     def reload_configuration(self):
@@ -1421,7 +1464,7 @@ class ParaFileManager(QMainWindow):
             # os.makedirs(self.base_dir, exist_ok=True)
             # with open(resource_path("rules.json"), "r") as f:
             #     self.rules = json.load(f)
-
+            self._load_scan_rules()
             with open(resource_path("config.json"), "r") as f:
                 config = json.load(f)
                         # Load the move history from the config file
@@ -1456,6 +1499,7 @@ class ParaFileManager(QMainWindow):
             self.logger.warn(f"Config load error: {e}")
             self.bottom_pane.setCurrentWidget(self.welcome_widget)
             return
+        
         self.update_ui_from_config()
 
     def update_ui_from_config(self):
@@ -2000,73 +2044,146 @@ class ParaFileManager(QMainWindow):
 
 # --- In ParaFileManager, REPLACE the _task_full_deduplication_scan method ---
 
+    # def _task_full_deduplication_scan(self, progress_callback):
+    #     """
+    #     Scans the entire base directory, now using a persistent cache
+    #     to intelligently skip hashing for unchanged files.
+    #     """
+    #     if not self.base_dir:
+    #         return {}
+        
+    #     # ... (The logic for discovering and filtering files remains the same) ...
+    #     self.logger.info("Starting intelligent full deduplication scan...")
+    #     all_files = get_all_files_in_paths([self.base_dir])
+    #     ignore_dirs = {'.git', '.svn', '.hg', 'node_modules', 'venv', 'env', '.env', '__pycache__', 'dist', 'build', 'target', 'out', 'bin', 'obj', '.idea', '.vscode', 'site-packages', 'lib', '.gradle', 'Pods'}
+    #     ignore_exts = {'.log', '.tmp', '.bak', '.swp', '.lock', '.pyc', '.o', '.so', '.class', '.jar'}
+    #     ignore_files = {'.DS_Store', 'thumbs.db'}
+    #     filtered_files = []
+    #     for path in all_files:
+    #         if os.path.basename(path) in ignore_files: continue
+    #         if os.path.splitext(path)[1].lower() in ignore_exts: continue
+    #         path_parts = set(path.lower().split(os.sep))
+    #         if not path_parts.isdisjoint(ignore_dirs): continue
+    #         try:
+    #             if os.path.getsize(path) < 1024: continue
+    #         except FileNotFoundError: continue
+    #         filtered_files.append(path)
+        
+    #     # --- NEW CACHE-AWARE HASHING LOGIC ---
+    #     hashes = {}
+    #     total_to_process = len(filtered_files)
+    #     self.logger.info(f"Processing {total_to_process} files using hash cache.")
+
+    #     # The 'with' statement ensures the database connection is properly managed.
+    #     with HashManager(self.hash_cache_db_path) as hm:
+    #         for i, file_path in enumerate(filtered_files):
+    #             filename = os.path.basename(file_path)
+    #             progress_callback(f"Checking: {filename}", i + 1, total_to_process)
+                
+    #             try:
+    #                 # 1. Get current file metadata
+    #                 stat = os.stat(file_path)
+    #                 current_mtime = stat.st_mtime
+    #                 current_size = stat.st_size
+
+    #                 # 2. Try to get a valid hash from the cache
+    #                 file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
+                    
+    #                 # 3. Decision
+    #                 if file_hash:
+    #                     # CACHE HIT: Use the cached hash, no expensive computation needed.
+    #                     pass # The hash is already retrieved
+    #                 else:
+    #                     # CACHE MISS: File is new or has been modified.
+    #                     progress_callback(f"Hashing: {filename}", i + 1, total_to_process)
+    #                     file_hash = self.get_hash_for_file(file_path, current_size)
+    #                     if file_hash:
+    #                         # Update the cache with the new hash and metadata
+    #                         hm.update_cache(file_path, current_mtime, current_size, file_hash)
+
+    #                 if file_hash:
+    #                     if file_hash not in hashes: hashes[file_hash] = []
+    #                     hashes[file_hash].append(file_path)
+
+    #             except (FileNotFoundError, PermissionError) as e:
+    #                 self.logger.warn(f"Could not access or hash {file_path}: {e}")
+    #                 continue
+    #     # --- END OF NEW LOGIC ---
+
+    #     duplicate_sets = {hash_val: paths for hash_val, paths in hashes.items() if len(paths) > 1}
+    #     self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
+    #     return duplicate_sets
+    
+    
+
+
+
     def _task_full_deduplication_scan(self, progress_callback):
         """
-        Scans the entire base directory, now using a persistent cache
-        to intelligently skip hashing for unchanged files.
+        Performs a Developer-Aware Smart Scan, using configurable rules
+        to exclude common development and environment files.
         """
         if not self.base_dir:
             return {}
         
-        # ... (The logic for discovering and filtering files remains the same) ...
-        self.logger.info("Starting intelligent full deduplication scan...")
-        all_files = get_all_files_in_paths([self.base_dir])
-        ignore_dirs = {'.git', '.svn', '.hg', 'node_modules', 'venv', 'env', '.env', '__pycache__', 'dist', 'build', 'target', 'out', 'bin', 'obj', '.idea', '.vscode', 'site-packages', 'lib', '.gradle', 'Pods'}
-        ignore_exts = {'.log', '.tmp', '.bak', '.swp', '.lock', '.pyc', '.o', '.so', '.class', '.jar'}
-        ignore_files = {'.DS_Store', 'thumbs.db'}
+        self.logger.info("Starting Developer-Aware scan...")
+        all_files_on_disk = get_all_files_in_paths([self.base_dir])
+        
+        # Get exclusion rules, with fallbacks if file is missing
+        excluded_dirs = set(self.scan_rules.get("excluded_dir_names", []))
+        excluded_path_parts = self.scan_rules.get("excluded_dir_paths_contain", [])
+        excluded_exts = set(self.scan_rules.get("excluded_extensions", []))
+        excluded_names = set(self.scan_rules.get("excluded_filenames", []))
+
         filtered_files = []
-        for path in all_files:
-            if os.path.basename(path) in ignore_files: continue
-            if os.path.splitext(path)[1].lower() in ignore_exts: continue
+        for path in all_files_on_disk:
+            filename = os.path.basename(path).lower()
+            ext = os.path.splitext(filename)[1]
             path_parts = set(path.lower().split(os.sep))
-            if not path_parts.isdisjoint(ignore_dirs): continue
+            
+            # Apply the multi-layer exclusion logic
+            if filename in excluded_names: continue
+            if ext in excluded_exts: continue
+            if not path_parts.isdisjoint(excluded_dirs): continue
+            if any(part in path.lower() for part in excluded_path_parts): continue
+            
             try:
-                if os.path.getsize(path) < 1024: continue
-            except FileNotFoundError: continue
+                if os.path.getsize(path) < 4096: continue # Ignore small config-like files
+            except FileNotFoundError:
+                continue
+            
             filtered_files.append(path)
         
-        # --- NEW CACHE-AWARE HASHING LOGIC ---
+        excluded_count = len(all_files_on_disk) - len(filtered_files)
+        self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
+
+        # The rest of the hashing logic using the cache remains the same...
         hashes = {}
         total_to_process = len(filtered_files)
-        self.logger.info(f"Processing {total_to_process} files using hash cache.")
-
-        # The 'with' statement ensures the database connection is properly managed.
         with HashManager(self.hash_cache_db_path) as hm:
             for i, file_path in enumerate(filtered_files):
                 filename = os.path.basename(file_path)
                 progress_callback(f"Checking: {filename}", i + 1, total_to_process)
-                
                 try:
-                    # 1. Get current file metadata
                     stat = os.stat(file_path)
-                    current_mtime = stat.st_mtime
-                    current_size = stat.st_size
-
-                    # 2. Try to get a valid hash from the cache
-                    file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
-                    
-                    # 3. Decision
-                    if file_hash:
-                        # CACHE HIT: Use the cached hash, no expensive computation needed.
-                        pass # The hash is already retrieved
-                    else:
-                        # CACHE MISS: File is new or has been modified.
+                    file_hash = hm.get_cached_hash(file_path, stat.st_mtime, stat.st_size)
+                    if not file_hash:
                         progress_callback(f"Hashing: {filename}", i + 1, total_to_process)
-                        file_hash = self.get_hash_for_file(file_path, current_size)
+                        file_hash = self.get_hash_for_file(file_path, stat.st_size)
                         if file_hash:
-                            # Update the cache with the new hash and metadata
-                            hm.update_cache(file_path, current_mtime, current_size, file_hash)
-
+                            hm.update_cache(file_path, stat.st_mtime, stat.st_size, file_hash)
                     if file_hash:
                         if file_hash not in hashes: hashes[file_hash] = []
                         hashes[file_hash].append(file_path)
-
                 except (FileNotFoundError, PermissionError) as e:
                     self.logger.warn(f"Could not access or hash {file_path}: {e}")
-                    continue
-        # --- END OF NEW LOGIC ---
+        
+        # --- Auto-prune the cache after a full scan ---
+        progress_callback("Pruning stale cache entries...", total_to_process, total_to_process)
+        hm.prune_cache(set(all_files_on_disk))
+        self.logger.info("Cache pruning complete.")
 
-        duplicate_sets = {hash_val: paths for hash_val, paths in hashes.items() if len(paths) > 1}
+        duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
         self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
         return duplicate_sets
 

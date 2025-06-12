@@ -1,22 +1,16 @@
-2025-06-13 02:47:13 [INFO    ] Reloading configuration...
-2025-06-13 02:47:13 [INFO    ] GPU acceleration is disabled or not available.
-2025-06-13 02:47:13 [INFO    ] Configuration loaded. Root: F:\para-file
-2025-06-13 02:47:13 [INFO    ] Valid cache found, loading index from cache.
-2025-06-13 02:47:14 [INFO    ] Indexing complete. 47298 items indexed.
-2025-06-13 02:47:14 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
-2025-06-13 02:47:14 [INFO    ] Re-enabling file system watcher.
-2025-06-13 02:47:14 [INFO    ] Setting up file system watcher...
-2025-06-13 02:47:17 [INFO    ] Now monitoring 9010 directories for real-time changes.
-2025-06-13 02:47:17 [INFO    ] Setting up file system watcher...
-2025-06-13 02:47:20 [INFO    ] Now monitoring 9010 directories for real-time changes.
-2025-06-13 02:47:20 [WARNING ] Numba library not found. GPU acceleration is disabled.
-2025-06-13 02:47:20 [INFO    ] Application Started.
-2025-06-13 02:47:29 [INFO    ] --- 'start_full_scan' initiated by user. ---
-2025-06-13 02:47:30 [INFO    ] User confirmed 'Yes'. Preparing to run task...
-2025-06-13 02:47:30 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
-2025-06-13 02:47:30 [INFO    ] Worker created and all signals connected. Starting thread...
-2025-06-13 02:47:30 [INFO    ] Starting intelligent full deduplication scan...
-2025-06-13 02:47:31 [INFO    ] Processing 1319 files using hash cache.
-2025-06-13 02:47:37 [INFO    ] Intelligent scan complete. Found 10 set(s) of duplicate files.
-2025-06-13 02:47:37 [INFO    ] Scan found duplicates. Pre-processing results for analytics dialog...
-2025-06-13 02:47:37 [INFO    ] Pre-processing complete. Passing 10 processed groups to dialog.
+2025-06-13 02:57:49 [INFO    ] --- 'start_full_scan' initiated by user. ---
+2025-06-13 02:57:50 [INFO    ] User confirmed 'Yes'. Preparing to run task...
+2025-06-13 02:57:50 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
+2025-06-13 02:57:50 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 02:57:50 [INFO    ] Starting Developer-Aware scan...
+2025-06-13 02:57:51 [INFO    ] Scan filtering complete. Excluded 81115 development/system files.
+2025-06-13 02:57:52 [ERROR   ] Background task failed: Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 151, in run
+    res = self.func(*self.args, **self.kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2183, in _task_full_deduplication_scan
+    hm.prune_cache(set(all_files_on_disk))
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 268, in prune_cache
+    self.cursor.execute("SELECT file_path FROM hash_cache")
+sqlite3.ProgrammingError: Cannot operate on a closed database.
+
