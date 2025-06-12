@@ -35,6 +35,84 @@ This application is engineered for power users who demand clarity, control, and 
   * A clean, visual settings panel allows you to set your main PARA directory and manage all automation rules with interactive dropdowns and text fields.
   * **Smart Migration:** If you ever change your PARA base directory, the app offers to **automatically move all existing folders and their contents** to the new location.
 
+### 🗂️ Core Organization
+
+* **PARA Drop Zones:** Quickly sort files into Projects, Areas, Resources, and Archives with dedicated drag-and-drop targets.
+* **Custom Folder Mode:** Go beyond PARA and analyze any folder on your system with the same powerful tools. (*GPU acceleration required for this mode*).
+* **Full File System View:** A complete tree view for Browse, creating, renaming, and deleting files and folders.
+* **Rich Context Menus:** Right-click on any file or folder to open it, show it in the native file explorer, copy its path, and more.
+
+### 🧠 Intelligent Duplicate Finder
+
+* **Developer-Aware Engine:** The scanner is smart enough to automatically ignore common development folders (`.git`, `node_modules`, `venv`), configuration files (`package.json`, `Dockerfile`), and library data (`nltk_data`, `.cache/huggingface`).
+* **User-Configurable Rules:** Fine-tune the scanner's behavior by editing a simple `scan_rules.json` file.
+* **Retention Scoring:** An advanced algorithm scores each file in a duplicate set to determine which one is most likely the "original" you want to keep.
+* **One-Click Cleanup:** The results dialog pre-selects the best file to keep and marks all others for deletion, allowing for safe and confident one-click cleanup.
+* **Safe Deletion:** All deleted items are grouped into a single, timestamped folder which is then moved to the Recycling Bin, preventing accidental data loss and making restoration easy.
+
+### ⚡ Performance & Efficiency
+
+* **Intelligent Hash Caching:** The application remembers the hashes of unchanged files. Subsequent scans are dramatically faster, often reducing scan times from minutes to seconds.
+* **Auto-Pruning Cache:** The hash cache automatically cleans itself, removing entries for files that no longer exist.
+* **Optional GPU Acceleration:** For users with compatible NVIDIA GPUs (and the `numba` library), hashing of very large files can be hardware-accelerated.
+* **Multi-threaded Operations:** All long-running tasks (scanning, moving, indexing) are performed on a background thread to keep the UI responsive.
+
+### ⚙️ Customization & Usability
+
+* **Automated Sorting Rules:** Create custom rules in `rules.json` to automatically move files to subfolders or add prefixes based on file type or keywords.
+* **Custom Icons:** Personalize the PARA category icons in the Settings dialog.
+* **Advanced Search:** Search results are scored and sorted by relevance. Matched keywords are highlighted for clarity.
+* **Persistent Data:** All settings, rules, and cache files are stored safely in your user's application data directory, ensuring they persist even with single-file executable builds.
+
+## Installation
+
+### For Users (Recommended)
+
+1. Go to the [Releases](https://github.com/CodingGeoff/Para-Toolkits/releases) page.
+2. Download the `ParaManager.exe` file from the latest release.
+3. Run the executable. No installation is required.
+
+On first run, the application will create a folder in your user's data directory to store settings and logs.
+
+### For Developers (Running from Source)
+
+1. Clone the repository:
+
+    ```bash
+    git clone [https://github.com/CodingGeoff/Para-Toolkits.git](https://github.com/CodingGeoff/Para-tookits.git)
+    cd your-repo
+    ```
+
+2. Create and activate a Python virtual environment:
+
+    ```bash
+    python -m venv venv
+    # On Windows
+    .\venv\Scripts\activate
+    # On macOS/Linux
+    source venv/bin/activate
+    ```
+
+3. Install the required dependencies:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4. Run the application:
+
+    ```bash
+    python para_manager.py
+    ```
+
+## Configuration
+
+The application uses several JSON files for configuration, which are created on the first run in your user's data directory. You can edit these to customize behavior:
+
+* `config.json`: Main settings, including operating mode and custom paths.
+* `rules.json`: Automation rules for sorting dropped files.
+* `scan_rules.json`: Exclusion rules for the Developer-Aware scanner.
+
 ## 🚀 Getting Started
 
 1. **Run the Application:**
@@ -42,7 +120,7 @@ This application is engineered for power users who demand clarity, control, and 
     * On first launch, you'll see a welcome screen. Click "Open Settings."
 
 2. **Set Your Base Directory:**
-    * In the settings window, click "Browse..." and choose an empty folder where you want your PARA structure to live (e.g., `C:/Users/YourUser/Documents/MyPARA`).
+    * In the settings window, click "Browse..." and choose an empty folder where you want your PARA structure to live (e.g., `C:/Users/YourUser/Documents/`).
     * Click "Save & Close." The application will automatically create the `1_Projects`, `2_Areas`, `3_Resources`, and `4_Archives` folders for you.
 
 3. **(Optional) Add Automation Rules:**
@@ -55,3 +133,7 @@ This application is engineered for power users who demand clarity, control, and 
 
 4. **Organize!**
     * You're all set! Start dragging files and folders into the drop zones or directly into the file tree to experience automated, intelligent organization.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.

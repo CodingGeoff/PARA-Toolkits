@@ -81,6 +81,25 @@ def global_exception_hook(exctype, value, tb, window=None):
     sys.exit(1)
 
 # --- UTILITY FUNCTIONS ---
+
+
+
+# --- ADD THIS NEW UTILITY FUNCTION ---
+
+def get_user_data_path(filename):
+    """
+    Returns a persistent path in the user's app data directory.
+    Creates the directory if it doesn't exist.
+    """
+    app_name = "ParaManagerEVO" # You can change this to your app's name
+    if sys.platform == "win32":
+        data_dir = os.path.join(os.getenv('APPDATA'), app_name)
+    else: # For macOS and Linux
+        data_dir = os.path.join(os.path.expanduser('~'), '.config', app_name)
+    
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, filename)
+
 def format_size(size_bytes):
     if size_bytes is None or size_bytes < 0: return "N/A"
     if size_bytes == 0: return "0 B"
@@ -416,7 +435,7 @@ class LogViewerDialog(QDialog):
                 html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
 
         self.log_display.setHtml("".join(html_lines))
-        
+
 class FullScanResultDialog(QDialog):
     def __init__(self, processed_sets, parent=None):
         super().__init__(parent)
@@ -602,7 +621,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.main_window = parent
         self.setWindowTitle("Settings & Rules")
-        self.setMinimumSize(800, 750)
+        # self.setMinimumSize(800, 750)
         self.setStyleSheet(parent.styleSheet())
         main_layout = QVBoxLayout(self)
 
@@ -741,8 +760,24 @@ class ParaFileManager(QMainWindow):
         self.move_to_history = []
         
         # --- GPU & Caching Properties ---
-        self.hash_cache_db_path = resource_path("hash_cache.db")
+        # self.hash_cache_db_path = resource_path("hash_cache.db")
+        # self.gpu_hashing_enabled = False
+        
+# --- In ParaFileManager.__init__, update the data paths ---
+
+        # --- GPU & Caching Properties ---
+        # Writable data files now use the user's persistent app data directory
+        self.hash_cache_db_path = get_user_data_path("hash_cache.db")
+        self.config_path = get_user_data_path("config.json")
+        self.rules_path = get_user_data_path("rules.json")
+        self.index_cache_path = get_user_data_path("file_index.cache")
+        # Logger path also needs to be persistent
+        self.log_path = get_user_data_path("para_manager.log")
+
         self.gpu_hashing_enabled = False
+        # ... rest of the __init__ method
+        
+        
         self.gpu_available = False
         self.gpu_status_message = "GPU not available or disabled."
 
@@ -980,11 +1015,20 @@ class ParaFileManager(QMainWindow):
         style = self.style()
         
         # --- NEW SCAN BUTTON ---
-        scan_button = QPushButton()
-        # CHANGED ICON to a magnifying glass for "Find/Scan"
-        scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
-        scan_button.setToolTip("Find all duplicate files in your PARA structure")
-        scan_button.clicked.connect(self.start_full_scan)
+        # scan_button = QPushButton()
+        # # CHANGED ICON to a magnifying glass for "Find/Scan"
+        # scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
+        # scan_button.setToolTip("Find all duplicate files in your PARA structure")
+        # scan_button.clicked.connect(self.start_full_scan)
+
+
+
+
+        self.scan_button = QPushButton() # Use self.scan_button instead of local variable
+        self.scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon)) # A better icon
+        self.scan_button.clicked.connect(self.start_full_scan)
+
+        
         
         about_button = QPushButton()
         about_button.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
@@ -1001,7 +1045,11 @@ class ParaFileManager(QMainWindow):
         log_button.setToolTip("View Logs")
         log_button.clicked.connect(self.open_log_viewer)
 
-        top_bar_layout.addWidget(scan_button) # Add the new scan button
+
+
+        # ...
+        top_bar_layout.addWidget(self.scan_button)
+        # top_bar_layout.addWidget(scan_button) # Add the new scan button
         top_bar_layout.addWidget(about_button)
         top_bar_layout.addWidget(settings_button)
         top_bar_layout.addWidget(log_button)
@@ -1447,6 +1495,15 @@ class ParaFileManager(QMainWindow):
             self.bottom_pane.setCurrentWidget(self.welcome_widget)
             return
 
+
+
+        self.scan_button.setEnabled(True)
+        # --- DYNAMIC TOOLTIP LOGIC ---
+        if self.operating_mode == "para":
+            self.scan_button.setToolTip(f"Find all duplicate files in your PARA structure\nRoot: {self.base_dir}")
+        else: # Custom mode
+            self.scan_button.setToolTip(f"Find all duplicate files in the current folder\nRoot: {self.base_dir}")
+            
         is_para_mode = (self.operating_mode == "para")
         self.drop_frames_widget.setVisible(is_para_mode)
 
@@ -3244,11 +3301,11 @@ class ParaFileManager(QMainWindow):
                     files_to_trash=files_to_trash
                 )
             else:
-                self.log_and_show("未执行任何操作。", "info")
+                self.log_and_show("No action was performed.", "info")
                 self._enable_watcher() # Re-enable if user confirms with no actions
         else:
             # User cancelled the main dialog
-            self.log_and_show("清理操作已取消。", "warn")
+            self.log_and_show("Cleanup operation cancelled.", "warn")
             self._enable_watcher()
                 
     def open_log_viewer(self):
@@ -3377,8 +3434,13 @@ class ParaFileManager(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     try:
-        main_logger = Logger()
+
+
+        main_logger = Logger(filename=get_user_data_path("para_manager.log"))
         window = ParaFileManager(main_logger)
+        
+        # main_logger = Logger()
+        # window = ParaFileManager(main_logger)
         sys.excepthook = partial(global_exception_hook, window=window)
         try:
             window.setWindowIcon(QIcon(resource_path('icon.ico')))

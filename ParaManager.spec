@@ -11,10 +11,6 @@ a = Analysis(
     datas=[
         ('icon.ico', '.'),
         ('config.json', '.'),
-        ('rules.json', '.'),
-        ('crash_report.log', '.'),
-        ('release_notes.md', '.'),
-        ('file_index.cache', '.')
     ],
     # --- 添加隐藏的导入 ---
     # 如果有 PyInstaller 未能自动发现的库，在这里添加。

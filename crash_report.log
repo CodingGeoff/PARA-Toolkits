@@ -1,0 +1,15 @@
+
+--- CRASH AT 2025-06-13 04:13:24.759173 ---
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 3440, in <module>
+    window = ParaFileManager(main_logger)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 809, in __init__
+    self.init_ui()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 822, in init_ui
+    main_layout.addLayout(self._create_top_bar())
+                          ^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1028, in _create_top_bar
+    self.scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogMagnifyButton)) # A better icon
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'StandardPixmap' has no attribute 'SP_DialogMagnifyButton'. Did you mean: 'SP_DialogCancelButton'?
