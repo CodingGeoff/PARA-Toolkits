@@ -196,6 +196,127 @@ class Logger:
         except FileNotFoundError: pass
         return "\n".join(logs)
 
+
+class HashingSelectionDialog(QDialog):
+    """Dialog for users to select files/folders for deduplication, with robust checkbox logic."""
+    def __init__(self, root_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Scope for Duplicate Check")
+        self.setMinimumSize(800, 600)
+        self.setStyleSheet(parent.styleSheet())
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Select items in the destination to include in the content check.</b>"))
+        layout.addWidget(QLabel("Uncheck items to exclude them. Parent/child selections are linked."))
+
+        self.model = QFileSystemModel()
+        self.model.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+        self.model.setRootPath(root_path)
+        self.model.setReadOnly(False)
+
+        self.tree = QTreeView()
+        self.tree.setModel(self.model)
+        self.tree.setRootIndex(self.model.index(root_path))
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tree.setColumnHidden(1, True); self.tree.setColumnHidden(2, True); self.tree.setColumnHidden(3, True)
+        
+        self._block_signals = False
+        self.set_check_state_recursive(self.model.index(0, 0, self.tree.rootIndex()), Qt.CheckState.Checked)
+        self.tree.expand(self.tree.rootIndex())
+        self.model.dataChanged.connect(self.on_data_changed)
+        layout.addWidget(self.tree)
+
+        button_layout = QHBoxLayout()
+        check_all_btn = QPushButton("Check All")
+        uncheck_all_btn = QPushButton("Uncheck All")
+        ok_button = QPushButton("Confirm & Start Scan")
+        cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(check_all_btn); button_layout.addWidget(uncheck_all_btn)
+        button_layout.addStretch(); button_layout.addWidget(cancel_button); button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+
+        ok_button.clicked.connect(self.accept); cancel_button.clicked.connect(self.reject)
+        
+        # --- FIX: Connect to new wrapper methods that block signals for performance ---
+        check_all_btn.clicked.connect(self.check_all_items)
+        uncheck_all_btn.clicked.connect(self.uncheck_all_items)
+
+    def check_all_items(self):
+        """Checks all items, blocking signals for performance."""
+        self.model.blockSignals(True)
+        self.set_check_state_recursive(self.tree.rootIndex(), Qt.CheckState.Checked)
+        self.model.blockSignals(False)
+        # Emit a single dataChanged signal for the root to notify the view of a major change
+        root_index = self.tree.rootIndex()
+        self.model.dataChanged.emit(root_index, root_index, [])
+        self.tree.viewport().update()
+
+    def uncheck_all_items(self):
+        """Unchecks all items, blocking signals for performance."""
+        self.model.blockSignals(True)
+        self.set_check_state_recursive(self.tree.rootIndex(), Qt.CheckState.Unchecked)
+        self.model.blockSignals(False)
+        # Emit a single dataChanged signal for the root to notify the view of a major change
+        root_index = self.tree.rootIndex()
+        self.model.dataChanged.emit(root_index, root_index, [])
+        self.tree.viewport().update()
+    
+    
+
+    # def on_index_rebuilt(self, index_data):
+    #     """这个槽函数在主线程中运行，用于接收索引结果并更新UI。"""
+    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
+    #     self.file_index = index_data
+    #     # 现在可以安全地调用 handle_search 来刷新UI了
+    #     self.handle_search(self.search_bar.text())
+    
+    def on_data_changed(self, topLeft, bottomRight, roles):
+        if Qt.ItemDataRole.CheckStateRole in roles and not self._block_signals:
+            self._block_signals = True
+            state = self.model.data(topLeft, Qt.ItemDataRole.CheckStateRole)
+            if self.model.hasChildren(topLeft):
+                self.set_check_state_recursive(topLeft, state, set_parent=False)
+            self.update_parent_states(topLeft.parent())
+            self._block_signals = False
+            
+    def set_check_state_recursive(self, parent_index, state, set_parent=True):
+        if not parent_index.isValid(): return
+        if set_parent:
+             self.model.setData(parent_index, state, Qt.ItemDataRole.CheckStateRole)
+        for i in range(self.model.rowCount(parent_index)):
+            child_index = self.model.index(i, 0, parent_index)
+            self.set_check_state_recursive(child_index, state)
+
+    def update_parent_states(self, parent_index):
+        if not parent_index.isValid(): return
+        checked_count, partially_checked_count, total_count = 0, 0, self.model.rowCount(parent_index)
+        for i in range(total_count):
+            state = self.model.data(self.model.index(i, 0, parent_index), Qt.ItemDataRole.CheckStateRole)
+            if state == Qt.CheckState.Checked: checked_count += 1
+            elif state == Qt.CheckState.PartiallyChecked: partially_checked_count += 1
+        new_state = Qt.CheckState.Unchecked
+        if checked_count == total_count: new_state = Qt.CheckState.Checked
+        elif checked_count > 0 or partially_checked_count > 0: new_state = Qt.CheckState.PartiallyChecked
+        self.model.setData(parent_index, new_state, Qt.ItemDataRole.CheckStateRole)
+        self.update_parent_states(parent_index.parent())
+
+    def get_checked_files(self):
+        checked_files = []
+        self._get_checked_recursive(self.tree.rootIndex(), checked_files)
+        return checked_files
+
+    def _get_checked_recursive(self, index, checked_list):
+        if not index.isValid(): return
+        if self.model.data(index, Qt.ItemDataRole.CheckStateRole) != Qt.CheckState.Unchecked:
+            path = self.model.filePath(index)
+            if os.path.isfile(path):
+                checked_list.append(path)
+            elif os.path.isdir(path) and self.model.hasChildren(index):
+                 for i in range(self.model.rowCount(index)):
+                    self._get_checked_recursive(self.model.index(i, 0, index), checked_list)
+                    
+                    
+                    
+                    
 class HashManager:
     """Manages a persistent SQLite cache for file hashes to avoid re-computation."""
     def __init__(self, db_path):
@@ -435,6 +556,43 @@ class LogViewerDialog(QDialog):
                 html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
 
         self.log_display.setHtml("".join(html_lines))
+
+class AboutDialog(QDialog):
+    """A dialog to display the application's version and release notes."""
+    def __init__(self, version, notes_markdown, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About")
+        self.setMinimumSize(700, 550)
+        self.setStyleSheet(parent.styleSheet())
+
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel(f"Latest version")
+        title_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        version_label = QLabel(f"Version {version}")
+        version_label.setFont(QFont("Segoe UI", 12))
+        version_label.setStyleSheet("color: #98c379;") # Use a highlight color
+        layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addSpacing(15)
+
+        notes_browser = QTextBrowser()
+        # QTextBrowser can render Markdown directly
+        notes_browser.setMarkdown(notes_markdown)
+        notes_browser.setOpenExternalLinks(True) # For any future links
+        layout.addWidget(notes_browser)
+        
+        layout.addSpacing(10)
+
+        # close_button = QPushButton("Close")
+        # close_button.clicked.connect(self.accept)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        # button_layout.addWidget(close_button)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
 
 class FullScanResultDialog(QDialog):
     def __init__(self, processed_sets, parent=None):
@@ -741,6 +899,9 @@ class SettingsDialog(QDialog):
 
         
 class ParaFileManager(QMainWindow):
+
+# --- In the ParaFileManager class, REPLACE the __init__ method ---
+
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
@@ -748,7 +909,7 @@ class ParaFileManager(QMainWindow):
         self.setGeometry(100, 100, 1400, 900)
         
         # --- Core Properties ---
-        self.APP_VERSION = "1.3.0"
+        self.APP_VERSION = "1.4.0"
         self.operating_mode = "para"
         self.base_dir = None
         self.para_folders = {"Projects": "1_Projects", "Areas": "2_Areas", "Resources": "3_Resources", "Archives": "4_Archives"}
@@ -756,34 +917,25 @@ class ParaFileManager(QMainWindow):
         self.folder_to_category = {v: k for k, v in self.para_folders.items()}
         self.para_category_icons = {}
         self.rules = []
-        self.scan_rules = {} # <-- ADD THIS LINE
+        self.scan_rules = {}
         self.move_to_history = []
         
-        # --- GPU & Caching Properties ---
-        # self.hash_cache_db_path = resource_path("hash_cache.db")
-        # self.gpu_hashing_enabled = False
-        
-# --- In ParaFileManager.__init__, update the data paths ---
-
-        # --- GPU & Caching Properties ---
-        # Writable data files now use the user's persistent app data directory
-        self.hash_cache_db_path = get_user_data_path("hash_cache.db")
+        # --- Persistent User Data Paths ---
+        # All writable files now use the persistent user data directory.
         self.config_path = get_user_data_path("config.json")
         self.rules_path = get_user_data_path("rules.json")
+        self.scan_rules_path = get_user_data_path("scan_rules.json")
+        self.hash_cache_db_path = get_user_data_path("hash_cache.db")
         self.index_cache_path = get_user_data_path("file_index.cache")
-        # Logger path also needs to be persistent
-        self.log_path = get_user_data_path("para_manager.log")
+        # Note: The logger is initialized outside and passed in with its path already set.
 
+        # --- GPU & Caching Properties ---
         self.gpu_hashing_enabled = False
-        # ... rest of the __init__ method
-        
-        
         self.gpu_available = False
         self.gpu_status_message = "GPU not available or disabled."
 
         # --- Search & Indexing ---
         self.file_index = []
-        self.index_cache_path = resource_path("file_index.cache")
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.perform_search)
@@ -803,10 +955,13 @@ class ParaFileManager(QMainWindow):
         self.reindex_timer.setSingleShot(True)
         self.reindex_timer.timeout.connect(lambda: self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt))
         
-        # --- Initialization ---
+        # --- Initialization Sequence ---
         self.setup_styles()
         self.setAcceptDrops(True)
         self.init_ui()
+        
+        self._ensure_config_files_exist()
+        
         self.reload_configuration()
         self.check_gpu_availability()
         self.logger.info("Application Started.")
@@ -1615,8 +1770,13 @@ class ParaFileManager(QMainWindow):
         
 
 
+# --- In ParaFileManager, REPLACE the on_index_rebuilt method ---
+
     def on_index_rebuilt(self, index_data, from_cache=False):
-        """Callback for when file index is built. Now handles cache saving."""
+        """
+        Callback for when file index is built. This is now the SOLE place
+        where the file watcher is re-enabled.
+        """
         if self.progress and self.progress.isVisible():
             self.progress.close()
             
@@ -1624,23 +1784,78 @@ class ParaFileManager(QMainWindow):
         self.file_index = index_data
         
         if not from_cache:
-            # Only save the cache if the index was freshly built
             try:
-                cache_to_save = {
-                    "base_dir": self.base_dir,
-                    "file_index": self.file_index
-                }
+                cache_to_save = { "base_dir": self.base_dir, "file_index": self.file_index }
                 with open(self.index_cache_path, 'w', encoding='utf-8') as f:
                     json.dump(cache_to_save, f)
                 self.logger.info(f"File index cache saved to {self.index_cache_path}")
             except Exception as e:
                 self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
         
+        # THIS IS THE FIX: The watcher is only re-enabled here, after all
+        # internal operations (including the re-index itself) are finished.
         self._enable_watcher() 
+        
         if self.search_bar.text().strip():
             self.perform_search()
         elif self.base_dir:
             self.bottom_pane.setCurrentWidget(self.tree_view)
+
+
+
+
+# --- In ParaFileManager, ADD this new method ---
+
+    def _ensure_config_files_exist(self):
+        """Checks for essential config files in the user data path and creates them if they don't exist."""
+        # config.json is created by the settings dialog, but rules files need defaults.
+        
+        # Default automation rules
+        if not os.path.exists(self.rules_path):
+            self.logger.info(f"rules.json not found. Creating default file at {self.rules_path}")
+            default_rules = []
+            with open(self.rules_path, 'w', encoding='utf-8') as f:
+                json.dump(default_rules, f, indent=4)
+
+        # Default developer-aware scan rules
+        if not os.path.exists(self.scan_rules_path):
+            self.logger.info(f"scan_rules.json not found. Creating default file at {self.scan_rules_path}")
+            default_scan_rules = {
+              "info": "Configuration for the Developer-Aware Smart Scan. You can add your own rules here.",
+              "excluded_dir_names": [".git",".svn",".hg",".idea",".vscode","__pycache__","node_modules","vendor","venv",".venv","env",".env","target","build","dist","bin","obj"],
+              "excluded_dir_paths_contain": ["site-packages","dist-packages","nltk_data",".cache/huggingface",".cache/torch","model_cache"],
+              "excluded_extensions": [".log",".tmp",".bak",".swp",".lock",".pyc",".o",".so",".class",".jar",".dll"],
+              "excluded_filenames": ["python.exe","pythonw.exe","pip.exe","pip3.exe","activate","activate.ps1","activate.bat","deactivate.bat","manage.py","package.json","package-lock.json","yarn.lock","pnpm-lock.yaml","webpack.config.js","vite.config.js","tsconfig.json","dockerfile","docker-compose.yml","readme.md"]
+            }
+            with open(self.scan_rules_path, 'w', encoding='utf-8') as f:
+                json.dump(default_scan_rules, f, indent=4)
+                           
+    # def on_index_rebuilt(self, index_data, from_cache=False):
+    #     """Callback for when file index is built. Now handles cache saving."""
+    #     if self.progress and self.progress.isVisible():
+    #         self.progress.close()
+            
+    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
+    #     self.file_index = index_data
+        
+    #     if not from_cache:
+    #         # Only save the cache if the index was freshly built
+    #         try:
+    #             cache_to_save = {
+    #                 "base_dir": self.base_dir,
+    #                 "file_index": self.file_index
+    #             }
+    #             with open(self.index_cache_path, 'w', encoding='utf-8') as f:
+    #                 json.dump(cache_to_save, f)
+    #             self.logger.info(f"File index cache saved to {self.index_cache_path}")
+    #         except Exception as e:
+    #             self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
+        
+    #     self._enable_watcher() 
+    #     if self.search_bar.text().strip():
+    #         self.perform_search()
+    #     elif self.base_dir:
+    #         self.bottom_pane.setCurrentWidget(self.tree_view)
             
             
 # --- 在 ParaFileManager 中，替换 _calculate_retention_score 方法 ---
@@ -3458,3 +3673,40 @@ if __name__ == "__main__":
                 traceback.print_exc(file=f)
         except:
             pass
+        
+
+
+# exe = EXE(
+#     pyz,
+#     a.scripts,
+#     [],
+#     exclude_binaries=True,
+#     name='ParaManager',
+#     debug=False,
+#     bootloader_ignore_signals=False,
+#     strip=False,
+#     upx=True, # Enable UPX compression. Ensure upx.exe is in your PATH.
+#     runtime_tmpdir=None,
+#     console=False, # This creates a windowed application (no console).
+#     icon='icon.ico',
+# )
+
+# # coll = COLLECT(
+# #     exe,
+# #     a.binaries,
+# #     a.zipfiles,
+# #     a.datas,
+# #     strip=False,
+# #     upx=True,
+# #     upx_exclude=[],
+# #     name='ParaManager' # This is the name of the output FOLDER.
+# # )
+
+# # For the final single-file bundle, uncomment the BUNDLE block
+# # and comment out the COLLECT block above.
+# BUNDLE(
+# exe,
+#     name='ParaManager.exe',
+#     icon='icon.ico',
+#     bundle_identifier=None,
+# )

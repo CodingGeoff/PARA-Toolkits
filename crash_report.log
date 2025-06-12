@@ -13,3 +13,10 @@ Traceback (most recent call last):
     self.scan_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogMagnifyButton)) # A better icon
                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AttributeError: type object 'StandardPixmap' has no attribute 'SP_DialogMagnifyButton'. Did you mean: 'SP_DialogCancelButton'?
+
+--- FATAL CRASH AT 2025-06-13 04:56:35.164242 ---
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 3410, in open_about_dialog
+    dialog = AboutDialog(self.APP_VERSION, notes_markdown, self)
+             ^^^^^^^^^^^
+NameError: name 'AboutDialog' is not defined. Did you mean: 'QInputDialog'?
