@@ -1,0 +1,10 @@
+
+--- FATAL CRASH AT 2025-06-13 03:33:37.646289 ---
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2430, in perform_search
+    self.display_search_page()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2470, in display_search_page
+    rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen ntpath>", line 791, in relpath
+ValueError: path is on mount 'F:', start on mount 'C:'

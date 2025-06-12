@@ -1,5 +1,5 @@
 {
-    "base_directory": "F:/para-file",
+    "base_directory": "C:/Users/39932/Music",
     "theme": "dark",
     "custom_icons": {},
     "move_to_history": [
@@ -10,5 +10,7 @@
         "F:/para-file/4_Archives/\u5e94\u7528\u7ffb\u8bd1/\u767d\u4e91\u5c71\u7f51\u7ad9",
         "F:/para-file/4_Archives/\u5927\u4e09\u4e0a\u5b66\u671f \u7ffb\u8bd1\u4f5c\u4e1a",
         "F:/para-file/4_Archives/\u5fae\u4e13\u4e1a\uff1a\u8bed\u8a00\u667a\u80fd"
-    ]
+    ],
+    "mode": "para",
+    "gpu_hashing_enabled": false
 }

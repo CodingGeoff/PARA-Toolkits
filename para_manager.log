@@ -1,16 +1,96 @@
-2025-06-13 02:57:49 [INFO    ] --- 'start_full_scan' initiated by user. ---
-2025-06-13 02:57:50 [INFO    ] User confirmed 'Yes'. Preparing to run task...
-2025-06-13 02:57:50 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
-2025-06-13 02:57:50 [INFO    ] Worker created and all signals connected. Starting thread...
-2025-06-13 02:57:50 [INFO    ] Starting Developer-Aware scan...
-2025-06-13 02:57:51 [INFO    ] Scan filtering complete. Excluded 81115 development/system files.
-2025-06-13 02:57:52 [ERROR   ] Background task failed: Traceback (most recent call last):
-  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 151, in run
-    res = self.func(*self.args, **self.kwargs)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2183, in _task_full_deduplication_scan
-    hm.prune_cache(set(all_files_on_disk))
-  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 268, in prune_cache
-    self.cursor.execute("SELECT file_path FROM hash_cache")
-sqlite3.ProgrammingError: Cannot operate on a closed database.
+2025-06-13 03:23:53 [INFO    ] Logger initialized.
+2025-06-13 03:23:53 [INFO    ] Reloading configuration...
+2025-06-13 03:23:53 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:23:53 [INFO    ] GPU acceleration is disabled or not available.
+2025-06-13 03:23:53 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-13 03:23:53 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:23:54 [INFO    ] Indexing complete. 82139 items indexed.
+2025-06-13 03:23:54 [INFO    ] File index cache saved to D:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:23:54 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:23:54 [INFO    ] Setting up file system watcher...
+2025-06-13 03:23:58 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:23:58 [INFO    ] Setting up file system watcher...
+2025-06-13 03:24:01 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:24:01 [WARNING ] Numba library not found. GPU acceleration is disabled.
+2025-06-13 03:24:01 [INFO    ] Application Started.
+2025-06-13 03:24:16 [INFO    ] --- 'start_full_scan' initiated by user. ---
+2025-06-13 03:24:17 [INFO    ] User confirmed 'Yes'. Preparing to run task...
+2025-06-13 03:24:17 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
+2025-06-13 03:24:17 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 03:24:17 [INFO    ] Starting Developer-Aware scan...
+2025-06-13 03:24:19 [INFO    ] Scan filtering complete. Excluded 81115 development/system files.
+2025-06-13 03:24:19 [INFO    ] Processing 1024 files using hash cache.
+2025-06-13 03:24:53 [INFO    ] Pruning stale entries from the hash cache...
+2025-06-13 03:24:53 [INFO    ] Cache pruning complete.
+2025-06-13 03:24:53 [INFO    ] Intelligent scan complete. Found 0 set(s) of duplicate files.
+2025-06-13 03:24:54 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:24:54 [INFO    ] Setting up file system watcher...
+2025-06-13 03:24:58 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:27:35 [INFO    ] Logger initialized.
+2025-06-13 03:27:35 [INFO    ] Reloading configuration...
+2025-06-13 03:27:35 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:27:35 [INFO    ] GPU acceleration is disabled or not available.
+2025-06-13 03:27:35 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-13 03:27:35 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:27:35 [INFO    ] Indexing complete. 82139 items indexed.
+2025-06-13 03:27:36 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:27:36 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:27:36 [INFO    ] Setting up file system watcher...
+2025-06-13 03:27:40 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:27:40 [INFO    ] Setting up file system watcher...
+2025-06-13 03:27:43 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:27:43 [WARNING ] Numba library not found. GPU acceleration is disabled.
+2025-06-13 03:27:43 [INFO    ] Application Started.
+2025-06-13 03:32:19 [INFO    ] Logger initialized.
+2025-06-13 03:32:20 [INFO    ] Reloading configuration...
+2025-06-13 03:32:20 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:32:20 [INFO    ] GPU acceleration is disabled or not available.
+2025-06-13 03:32:20 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-13 03:32:20 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:32:20 [INFO    ] No valid cache found. Performing full re-index.
+2025-06-13 03:32:20 [INFO    ] --- 'run_task' called for task: _task_rebuild_file_index ---
+2025-06-13 03:32:21 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 03:32:21 [INFO    ] Rebuilding file index...
+2025-06-13 03:32:21 [WARNING ] Numba library not found. GPU acceleration is disabled.
+2025-06-13 03:32:21 [INFO    ] Application Started.
+2025-06-13 03:32:32 [INFO    ] Indexing complete. Found 82139 items.
+2025-06-13 03:32:32 [INFO    ] Indexing complete. 82139 items indexed.
+2025-06-13 03:32:33 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:32:33 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:32:33 [INFO    ] Setting up file system watcher...
+2025-06-13 03:32:36 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:32:38 [INFO    ] --- 'start_full_scan' initiated by user. ---
+2025-06-13 03:32:40 [INFO    ] User confirmed 'Yes'. Preparing to run task...
+2025-06-13 03:32:40 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
+2025-06-13 03:32:40 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 03:32:40 [INFO    ] Starting Developer-Aware scan...
+2025-06-13 03:32:42 [INFO    ] Scan filtering complete. Excluded 81115 development/system files.
+2025-06-13 03:32:42 [INFO    ] Processing 1024 files using hash cache.
+2025-06-13 03:32:45 [INFO    ] Cache pruning complete. Pruned 0 stale entries.
+2025-06-13 03:32:45 [INFO    ] Intelligent scan complete. Found 0 set(s) of duplicate files.
+2025-06-13 03:32:46 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:32:46 [INFO    ] Setting up file system watcher...
+2025-06-13 03:32:49 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 03:33:12 [INFO    ] Settings saved. Reloading configuration...
+2025-06-13 03:33:12 [INFO    ] Reloading configuration...
+2025-06-13 03:33:12 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:33:12 [INFO    ] GPU acceleration is disabled or not available.
+2025-06-13 03:33:12 [INFO    ] Configuration loaded. Root: C:\Users\39932\Music
+2025-06-13 03:33:12 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:33:12 [INFO    ] Indexing complete. 82139 items indexed.
+2025-06-13 03:33:13 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:33:13 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:33:13 [INFO    ] Setting up file system watcher...
+2025-06-13 03:33:16 [INFO    ] Now monitoring 441 directories for real-time changes.
+2025-06-13 03:33:16 [INFO    ] Setting up file system watcher...
+2025-06-13 03:33:18 [INFO    ] Now monitoring 441 directories for real-time changes.
+2025-06-13 03:33:37 [ERROR   ] A fatal, unhandled exception occurred:
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2430, in perform_search
+    self.display_search_page()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2470, in display_search_page
+    rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen ntpath>", line 791, in relpath
+ValueError: path is on mount 'F:', start on mount 'C:'
 

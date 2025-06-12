@@ -12,19 +12,7 @@ import sqlite3
 import tempfile
 
 # Required libraries: pip install PyQt6 send2trash numba
-try:
-    import send2trash
-except ImportError:
-    print("Error: send2trash library not found. Please run: pip install send2trash")
-    sys.exit(1)
-
-try:
-    # Numba is optional for GPU acceleration
-    from numba import cuda
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
-
+import send2trash
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -55,12 +43,14 @@ def global_exception_hook(exctype, value, tb, window=None):
     )
     try:
         main_logger.error("A fatal, unhandled exception occurred:\n" + traceback_details)
-    except (NameError, AttributeError): pass
+    except (NameError, AttributeError):
+        pass
     try:
         with open("crash_report.log", "a", encoding="utf-8") as f:
             f.write(f"\n--- FATAL CRASH AT {datetime.now()} ---\n{traceback_details}")
     except Exception as e:
         print(f"Could not write to crash_report.log: {e}")
+
     app = QApplication.instance() or QApplication(sys.argv)
     error_box = QMessageBox()
     error_box.setIcon(QMessageBox.Icon.Critical)
@@ -87,7 +77,7 @@ def format_size(size_bytes):
     power = 1024
     n = 0
     power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
-    while size_bytes >= power and n < len(power_labels) -1:
+    while size_bytes >= power and n < len(power_labels):
         size_bytes /= power
         n += 1
     return f"{size_bytes:.2f} {power_labels[n]}"
@@ -120,62 +110,173 @@ def get_all_files_in_paths(paths):
                     all_files.append(os.path.join(root, name))
     return all_files
 
-# --- HELPER & WORKER CLASSES ---
+# # --- HELPER & WORKER CLASSES ---
+# class Worker(QThread):
+#     result = pyqtSignal(object)
+#     error = pyqtSignal(str)
+#     progress = pyqtSignal(str, int, int)
+#     def __init__(self, func, *args, **kwargs):
+#         super().__init__()
+#         self.func = func
+#         self.args = args
+#         self.kwargs = kwargs
+#     def run(self):
+#         try:
+#             res = self.func(self.progress.emit, *self.args, **self.kwargs)
+#             self.result.emit(res)
+#         except Exception:
+#             self.error.emit(traceback.format_exc())
+
+
+
+# --- In your script, REPLACE the entire Worker class with this one ---
+
 class Worker(QThread):
     """A generic worker thread for running background tasks."""
     result = pyqtSignal(object)
     error = pyqtSignal(str)
     progress = pyqtSignal(str, int, int)
+
     def __init__(self, func, *args, **kwargs):
         super().__init__()
         self.func = func
+        # The first argument passed to the worker is now the progress signal emitter
         self.args = (self.progress.emit,) + args
         self.kwargs = kwargs
+
     def run(self):
+        """Executes the function with the provided arguments."""
         try:
+            # The function is now called correctly with the prepended progress signal
             res = self.func(*self.args, **self.kwargs)
             self.result.emit(res)
         except Exception:
             self.error.emit(traceback.format_exc())
+            
+
+# --- In your script, REPLACE the entire Logger class with this one ---
 
 class Logger:
     """A simple file-based logger."""
     def __init__(self, filename="para_manager.log"):
         self.log_file = resource_path(filename)
         self.log_format = "{timestamp} [{level:<8}] {message}"
-        self.info("Logger initialized.")
+        # This initial log message is optional but good for seeing new runs.
+        # self.info("Logger initialized.")
+
     def _write(self, level, message):
+        """Internal method to write a formatted log entry."""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(self.log_format.format(timestamp=timestamp, level=level, message=message) + "\n")
         except Exception as e:
             print(f"FATAL: Could not write to log file {self.log_file}: {e}")
-    def info(self, message): self._write("INFO", message)
-    def warn(self, message): self._write("WARNING", message)
+
+    def info(self, message):
+        self._write("INFO", message)
+
+    def warn(self, message):
+        self._write("WARNING", message)
+
     def error(self, message, exc_info=False):
-        if exc_info: message += f"\n{traceback.format_exc()}"
+        if exc_info:
+            message += f"\n{traceback.format_exc()}"
         self._write("ERROR", message)
+
     def get_log_dates(self):
+        """Scans the log file and returns a sorted list of unique dates."""
         dates = set()
         try:
             with open(self.log_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     if len(line) >= 10:
                         try:
+                            # Check if the start of the line is a valid date
                             datetime.strptime(line[:10], '%Y-%m-%d')
                             dates.add(line[:10])
-                        except ValueError: continue
-        except FileNotFoundError: pass
+                        except ValueError:
+                            continue
+        except FileNotFoundError:
+            pass # It's okay if the log file doesn't exist yet
         return sorted(list(dates), reverse=True)
+
     def get_logs_for_date(self, date_str):
+        """Returns all log entries for a specific date as a single string."""
         logs = []
         try:
             with open(self.log_file, 'r', encoding='utf-8') as f:
                 for line in f:
-                    if line.startswith(date_str): logs.append(line.strip())
-        except FileNotFoundError: pass
+                    if line.startswith(date_str):
+                        logs.append(line.strip())
+        except FileNotFoundError:
+            pass
         return "\n".join(logs)
+     
+# class Logger:
+#     def __init__(self, filename="para_manager.log"):
+#         self.log_file = resource_path(filename)
+#         self.log_format = "{timestamp} [{level:<8}] {message}"
+#         self.info("Logger initialized.")
+#     def _write(self, level, message):
+#         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#         try:
+#             with open(self.log_file, 'a', encoding='utf-8') as f:
+#                 f.write(self.log_format.format(timestamp=timestamp, level=level, message=message) + "\n")
+#         except Exception as e:
+#             print(f"FATAL: Could not write to log file {self.log_file}: {e}")
+#     def info(self, message): self._write("INFO", message)
+#     def warn(self, message): self._write("WARNING", message)
+#     def error(self, message, exc_info=False):
+#         if exc_info: message += f"\n{traceback.format_exc()}"
+#         self._write("ERROR", message)
+
+# class HashManager:
+#     """Manages a persistent SQLite cache for file hashes to avoid re-computation."""
+#     def __init__(self, db_path):
+#         self.db_path = db_path
+#         self.connection = None
+#         self.cursor = None
+#     def __enter__(self):
+#         try:
+#             self.connection = sqlite3.connect(self.db_path)
+#             self.cursor = self.connection.cursor()
+#             self._setup_database()
+#         except sqlite3.Error as e:
+#             print(f"FATAL: Could not connect to hash database: {e}")
+#             raise
+#         return self
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         if self.connection:
+#             self.connection.commit()
+#             self.connection.close()
+#     def _setup_database(self):
+#         self.cursor.execute("CREATE TABLE IF NOT EXISTS hash_cache (file_path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, file_hash TEXT NOT NULL, last_checked REAL NOT NULL)")
+#         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON hash_cache (file_path)")
+#     def get_cached_hash(self, file_path, mtime, size):
+#         self.cursor.execute("SELECT mtime, size, file_hash FROM hash_cache WHERE file_path = ?", (file_path,))
+#         result = self.cursor.fetchone()
+#         if result:
+#             cached_mtime, cached_size, cached_hash = result
+#             if cached_mtime == mtime and cached_size == size:
+#                 return cached_hash
+#         return None
+#     def update_cache(self, file_path, mtime, size, file_hash):
+#         now = datetime.now().timestamp()
+#         self.cursor.execute("INSERT OR REPLACE INTO hash_cache VALUES (?, ?, ?, ?, ?)", (file_path, mtime, size, file_hash, now))
+#     def prune_cache(self, valid_paths_set):
+#         self.cursor.execute("SELECT file_path FROM hash_cache")
+#         cached_paths = {row[0] for row in self.cursor.fetchall()}
+#         paths_to_delete = list(cached_paths - valid_paths_set)
+#         if paths_to_delete:
+#             self.cursor.executemany("DELETE FROM hash_cache WHERE file_path = ?", [(p,) for p in paths_to_delete])
+#             self.connection.commit()
+#             self.main_window.logger.info(f"Pruned {len(paths_to_delete)} stale entries from hash cache.")
+
+
+
+
+# --- REPLACE the entire HashManager class with this version ---
 
 class HashManager:
     """Manages a persistent SQLite cache for file hashes to avoid re-computation."""
@@ -183,6 +284,7 @@ class HashManager:
         self.db_path = db_path
         self.connection = None
         self.cursor = None
+
     def __enter__(self):
         try:
             self.connection = sqlite3.connect(self.db_path)
@@ -192,13 +294,23 @@ class HashManager:
             print(f"FATAL: Could not connect to hash database: {e}")
             raise
         return self
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.connection:
             self.connection.commit()
             self.connection.close()
+
     def _setup_database(self):
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS hash_cache (file_path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, file_hash TEXT NOT NULL, last_checked REAL NOT NULL)")
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hash_cache (
+                file_path TEXT PRIMARY KEY,
+                mtime REAL NOT NULL,
+                size INTEGER NOT NULL,
+                file_hash TEXT NOT NULL,
+                last_checked REAL NOT NULL
+            )""")
         self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON hash_cache (file_path)")
+
     def get_cached_hash(self, file_path, mtime, size):
         self.cursor.execute("SELECT mtime, size, file_hash FROM hash_cache WHERE file_path = ?", (file_path,))
         result = self.cursor.fetchone()
@@ -207,22 +319,31 @@ class HashManager:
             if cached_mtime == mtime and cached_size == size:
                 return cached_hash
         return None
+
     def update_cache(self, file_path, mtime, size, file_hash):
         now = datetime.now().timestamp()
         self.cursor.execute("INSERT OR REPLACE INTO hash_cache VALUES (?, ?, ?, ?, ?)", (file_path, mtime, size, file_hash, now))
+
     def prune_cache(self, valid_paths_set):
+        """Removes entries from the cache that are not in the valid_paths_set."""
         self.cursor.execute("SELECT file_path FROM hash_cache")
         cached_paths = {row[0] for row in self.cursor.fetchall()}
         paths_to_delete = list(cached_paths - valid_paths_set)
+        
         if paths_to_delete:
             self.cursor.executemany("DELETE FROM hash_cache WHERE file_path = ?", [(p,) for p in paths_to_delete])
             self.connection.commit()
+        
+        # Return the number of pruned items for the caller to log
         return len(paths_to_delete)
+    
+    
+    
 
 # --- CUSTOM WIDGET CLASSES ---
 class ActionWidget(QWidget):
     """A stateless widget container for a Keep button."""
-    keep_requested = pyqtSignal()
+    keep_requested = pyqtSignal(bool)
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
@@ -233,13 +354,13 @@ class ActionWidget(QWidget):
         self.keep_button.setToolTip("保留这个文件，并清理此组中的其他文件。")
         self.keep_button.setCheckable(True)
         self.keep_button.setChecked(False)
-        self.keep_button.toggled.connect(lambda checked: self.keep_requested.emit() if checked else None)
+        self.keep_button.toggled.connect(lambda checked: self.keep_requested.emit(checked) if checked else None)
         layout.addWidget(self.keep_button)
 
 class DropFrame(QFrame):
+    """A drop target frame for one of the PARA categories."""
     def __init__(self, category_name, icon, main_window):
-        # The parent widget (main_window) is passed to super().__init__
-        super().__init__(main_window)
+        super().__init__()
         self.category_name = category_name
         self.main_window = main_window
         self.setAcceptDrops(True)
@@ -254,30 +375,20 @@ class DropFrame(QFrame):
         layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
     
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or (event.source() and isinstance(event.source(), QTreeView)):
             event.acceptProposedAction()
             self.main_window.set_drop_frame_style(True)
             
     def dropEvent(self, event):
+        # This logic is simplified; the main window handles the drop processing
         source_paths = [url.toLocalFile() for url in event.mimeData().urls()]
         if source_paths:
             self.main_window.process_dropped_items(source_paths, self.category_name)
         self.main_window.reset_drop_frame_styles()
         event.acceptProposedAction()
 
-# class DropTreeView(QTreeView):
-#     """Base TreeView with context menu and drop handling for external files."""
-#     # ... (This class is complete and correct from previous versions)
-
-# class ThemedTreeView(DropTreeView):
-#     """A TreeView that can paint large, faint text in its background."""
-#     # ... (This class is complete and correct from previous versions)
-
-
-
-# --- ADD THESE TWO MISSING CLASSES TO YOUR SCRIPT ---
-
 class DropTreeView(QTreeView):
+    """Base TreeView with context menu and drop handling for external files."""
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
@@ -304,43 +415,121 @@ class DropTreeView(QTreeView):
         
         if category_name:
             files = [url.toLocalFile() for url in event.mimeData().urls()]
-            # This logic correctly passes the drop to the main window's processing function
             self.main_window.process_dropped_items(files, category_name, specific_target_dir=target_dir_path)
         
         event.acceptProposedAction()
 
 class ThemedTreeView(DropTreeView):
-    """A QTreeView that can paint large, faint text in its background."""
+    """A TreeView that can paint large, faint text in its background."""
     def __init__(self, main_window):
         super().__init__(main_window)
         self.background_text = ""
 
     def setBackgroundText(self, text):
-        """Sets the text to be drawn in the background and triggers a repaint."""
         if self.background_text != text:
             self.background_text = text
-            self.viewport().update()  # Repaint only if text changes
+            self.viewport().update()
 
     def paintEvent(self, event):
-        """Overrides the paint event to draw the background text before drawing the tree."""
-        # First, call the original paint event so the default background is drawn
         super().paintEvent(event)
-
         if self.background_text:
             painter = QPainter(self.viewport())
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-            # Configure a very large, bold font
             font = QFont("Segoe UI", 120, QFont.Weight.ExtraBold)
             painter.setFont(font)
-
-            # Set a very faint color for the text (light grey with low opacity)
             painter.setPen(QColor(200, 200, 200, 15))
-
-            # Draw the text centered in the view
             painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.background_text)
-            
             painter.end()
+
+# ---UI DIALOGS ---
+# Note: Other dialogs like AboutDialog, MoveToDialog etc. would go here.
+# For brevity, only the most complex dialogs are included in this consolidated response.
+# Ensure you have all dialog class definitions in your final script.
+
+# class FullScanResultDialog(QDialog):
+#     # This class is complete and correct from the previous turn.
+#     # No changes needed.
+#     pass # In a real file, the full correct class definition would be here.
+
+# class SettingsDialog(QDialog):
+#     # This class is also complete and correct from the previous turns.
+#     # No changes needed.
+#     pass # In a real file, the full correct class definition would be here.
+
+# --- ADD THIS ENTIRE DIALOG CLASS to your UI DIALOGS section ---
+
+class LogViewerDialog(QDialog):
+    def __init__(self, logger, parent=None):
+        super().__init__(parent)
+        self.logger = logger
+        self.setWindowTitle("Log Viewer")
+        self.setMinimumSize(900, 700)
+        self.setStyleSheet(parent.styleSheet())
+        
+        layout = QVBoxLayout(self)
+        controls_layout = QHBoxLayout()
+        self.date_combo = QComboBox()
+        controls_layout.addWidget(QLabel("Select Date:"))
+        controls_layout.addWidget(self.date_combo)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
+        
+        self.log_display = QTextBrowser()
+        self.log_display.setFont(QFont("Consolas", 10))
+        
+        # Set the background color to match the dark theme
+        palette = self.log_display.palette()
+        palette.setColor(QPalette.ColorRole.Base, QColor("#21252b"))
+        self.log_display.setPalette(palette)
+        
+        layout.addWidget(self.log_display)
+        
+        self.date_combo.currentIndexChanged.connect(self.load_log_for_date)
+        self.populate_dates()
+
+    def populate_dates(self):
+        self.date_combo.clear()
+        self.date_combo.addItems(self.logger.get_log_dates())
+
+    def load_log_for_date(self):
+        date_str = self.date_combo.currentText()
+        if not date_str:
+            self.log_display.setHtml("")
+            return
+
+        logs = self.logger.get_logs_for_date(date_str)
+        
+        color_timestamp = "#6c7380"
+        color_default = "#abb2bf"
+        color_info = "#63a37b"
+        color_warn = "#cda152"
+        color_error = "#b85c5c"
+        
+        html_lines = []
+        for line in logs.split('\n'):
+            line = line.replace("<", "&lt;").replace(">", "&gt;")
+            
+            main_color = color_default
+            if "[ERROR" in line: main_color = color_error
+            elif "[WARNING" in line: main_color = color_warn
+            elif "[INFO" in line: main_color = color_info
+
+            pre_style = 'style="margin: 0; padding: 2px 5px; white-space: pre-wrap;"'
+
+            if len(line) > 23 and line[19] == ' ' and '[' in line[20:29]:
+                timestamp = line[:19]
+                message = line[19:]
+                html_line = (
+                    f'<pre {pre_style}>'
+                    f'<span style="color: {color_timestamp};">{timestamp}</span>'
+                    f'<span style="color: {main_color};">{message}</span>'
+                    f'</pre>'
+                )
+                html_lines.append(html_line)
+            else:
+                html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
+
+        self.log_display.setHtml("".join(html_lines))
 # --- DIALOGS ---
 class FullScanResultDialog(QDialog):
     def __init__(self, processed_sets, parent=None):
@@ -369,6 +558,13 @@ class FullScanResultDialog(QDialog):
         
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
+        
+
+
+        # self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
+        
+        
         main_layout.addWidget(self.tree)
         
         button_box = QHBoxLayout()
@@ -389,6 +585,25 @@ class FullScanResultDialog(QDialog):
         self.confirm_button.clicked.connect(self.accept)
         cancel_button.clicked.connect(self.reject)
 
+    def show_tree_context_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        # Only show menu for actual file items (which have a parent), not group headers.
+        if not item or not item.parent():
+            return
+            
+        file_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not file_data: return
+        path = file_data.get("path")
+        if not path: return
+
+        menu = QMenu()
+        style = self.style()
+        show_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+        
+        action = menu.exec(self.tree.mapToGlobal(pos))
+
+        if action == show_action:
+            self.main_window.show_in_explorer(path)
     def populate_tree_and_set_defaults(self):
         for group_data in self.processed_sets:
             group_header = QTreeWidgetItem(self.tree)
@@ -405,7 +620,6 @@ class FullScanResultDialog(QDialog):
             for file_data in group_data["files"]:
                 child_item = QTreeWidgetItem(group_header, ["", file_data["path"]])
                 child_item.setData(0, Qt.ItemDataRole.UserRole, file_data)
-                child_item.setToolTip(1, f"得分: {file_data['score']}\n理由: {file_data['reason']}\n修改日期: {datetime.fromtimestamp(file_data['mtime']).strftime('%Y-%m-%d %H:%M:%S')}")
                 action_widget = ActionWidget()
                 is_best = (file_data["path"] == best_file_path)
                 action_widget.keep_button.setChecked(is_best)
@@ -422,7 +636,7 @@ class FullScanResultDialog(QDialog):
                 child_item = group_header.child(j)
                 action_widget = self.tree.itemWidget(child_item, 0)
                 if action_widget:
-                    action_widget.keep_requested.connect(lambda item=child_item: self._on_keep_requested(item))
+                    action_widget.keep_requested.connect(lambda checked, item=child_item: self._on_keep_requested(item))
 
     def _on_keep_requested(self, selected_item):
         parent_group = selected_item.parent()
@@ -437,7 +651,7 @@ class FullScanResultDialog(QDialog):
                 for col in range(self.tree.columnCount()):
                     item.setBackground(col, bg_color)
         self._update_savings_label()
-    
+
     def get_files_to_trash(self):
         files_to_trash = []
         root = self.tree.invisibleRootItem()
@@ -457,13 +671,18 @@ class FullScanResultDialog(QDialog):
         if not item or not item.parent(): return
         file_data = item.data(0, Qt.ItemDataRole.UserRole)
         if not file_data: return
-        path = file_data.get("path")
-        if not path: return
+        path = file_data["path"]
         menu = QMenu()
-        show_action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+        style = self.style()
+        open_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "打开文件")
+        show_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+        copy_path_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "复制文件路径")
         action = menu.exec(self.tree.mapToGlobal(pos))
-        if action == show_action:
-            self.main_window.show_in_explorer(path)
+        if action == open_action: self.main_window.open_item(path)
+        elif action == show_action: self.main_window.show_in_explorer(path)
+        elif action == copy_path_action:
+            QApplication.clipboard().setText(os.path.normpath(path))
+            self.main_window.log_and_show(f"路径已复制: {os.path.normpath(path)}", "info", 2000)
 
     def _setup_controls(self, layout):
         controls_frame = QFrame()
@@ -1752,109 +1971,12 @@ class ParaFileManager(QMainWindow):
         return score, reason_str
 
 
-    # # --- In the ParaFileManager class, REPLACE the _task_full_deduplication_scan method ---
-
-    # def _task_full_deduplication_scan(self, progress_callback):
-    #     """
-    #     Performs a Developer-Aware Smart Scan, using a persistent cache to
-    #     intelligently skip hashing and prune stale entries.
-    #     """
-    #     if not self.base_dir:
-    #         return {}
-        
-    #     self.logger.info("Starting Developer-Aware scan...")
-    #     all_files_on_disk = get_all_files_in_paths([self.base_dir])
-        
-    #     # --- Filtering Logic (Unchanged) ---
-    #     excluded_dirs = set(self.scan_rules.get("excluded_dir_names", []))
-    #     excluded_path_parts = self.scan_rules.get("excluded_dir_paths_contain", [])
-    #     excluded_exts = set(self.scan_rules.get("excluded_extensions", []))
-    #     excluded_names = set(self.scan_rules.get("excluded_filenames", []))
-
-    #     filtered_files = []
-    #     for path in all_files_on_disk:
-    #         filename = os.path.basename(path).lower()
-    #         ext = os.path.splitext(filename)[1]
-    #         path_parts = set(path.lower().split(os.sep))
-            
-    #         if filename in excluded_names: continue
-    #         if ext in excluded_exts: continue
-    #         if not path_parts.isdisjoint(excluded_dirs): continue
-    #         if any(part in path.lower() for part in excluded_path_parts): continue
-            
-    #         try:
-    #             if os.path.getsize(path) < 4096: continue
-    #         except FileNotFoundError:
-    #             continue
-            
-    #         filtered_files.append(path)
-        
-    #     excluded_count = len(all_files_on_disk) - len(filtered_files)
-    #     self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
-
-    #     # --- Cache-Aware Hashing and Pruning Logic ---
-    #     hashes = {}
-    #     total_to_process = len(filtered_files)
-    #     self.logger.info(f"Processing {total_to_process} files using hash cache.")
-
-    #     # The 'with' statement ensures the database connection is properly managed.
-    #     with HashManager(self.hash_cache_db_path) as hm:
-    #         for i, file_path in enumerate(filtered_files):
-    #             filename = os.path.basename(file_path)
-    #             progress_callback(f"Checking: {filename}", i + 1, total_to_process)
-                
-    #             try:
-
-
-
-
-    #                 progress_callback("Pruning stale cache entries...", total_to_process, total_to_process)
-    #                 pruned_count = hm.prune_cache(set(all_files_on_disk))
-    #                 # self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
-    #         # --- END OF FIX ---
-            
-            
-    #                 stat = os.stat(file_path)
-    #                 current_mtime = stat.st_mtime
-    #                 current_size = stat.st_size
-
-    #                 file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
-                    
-    #                 if not file_hash:
-    #                     progress_callback(f"Hashing: {filename}", i + 1, total_to_process)
-    #                     file_hash = self.get_hash_for_file(file_path, current_size)
-    #                     if file_hash:
-    #                         hm.update_cache(file_path, current_mtime, current_size, file_hash)
-
-    #                 if file_hash:
-    #                     if file_hash not in hashes: hashes[file_hash] = []
-    #                     hashes[file_hash].append(file_path)
-
-    #             except (FileNotFoundError, PermissionError) as e:
-    #                 self.logger.warn(f"Could not access or hash {file_path}: {e}")
-    #                 continue
-
-    #         # --- THIS IS THE FIX ---
-    #         # The pruning logic is now moved INSIDE the 'with' block,
-    #         # ensuring the database connection is still open.
-    #         progress_callback("Pruning stale cache entries...", total_to_process, total_to_process)
-    #         self.logger.info("Pruning stale entries from the hash cache...")
-    #         hm.prune_cache(set(all_files_on_disk))
-    #         self.logger.info("Cache pruning complete.")
-    #         # --- END OF FIX ---
-
-    #     duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
-    #     self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
-    #     return duplicate_sets
-
-
-
-# --- In ParaFileManager, REPLACE this method ---
+    # --- In the ParaFileManager class, REPLACE the _task_full_deduplication_scan method ---
 
     def _task_full_deduplication_scan(self, progress_callback):
         """
-        Performs a Developer-Aware Smart Scan with improved progress reporting
-        for a smoother user experience.
+        Performs a Developer-Aware Smart Scan, using a persistent cache to
+        intelligently skip hashing and prune stale entries.
         """
         if not self.base_dir:
             return {}
@@ -1889,19 +2011,28 @@ class ParaFileManager(QMainWindow):
         excluded_count = len(all_files_on_disk) - len(filtered_files)
         self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
 
-        # --- Improved Progress Reporting Logic ---
+        # --- Cache-Aware Hashing and Pruning Logic ---
         hashes = {}
-        # The total number of steps now includes one extra step for finalization.
-        total_steps = len(filtered_files) + 1
-        self.logger.info(f"Processing {len(filtered_files)} files using hash cache.")
+        total_to_process = len(filtered_files)
+        self.logger.info(f"Processing {total_to_process} files using hash cache.")
 
+        # The 'with' statement ensures the database connection is properly managed.
         with HashManager(self.hash_cache_db_path) as hm:
             for i, file_path in enumerate(filtered_files):
                 filename = os.path.basename(file_path)
-                # This loop will now bring the progress up to (total-1)/total percent.
-                progress_callback(f"Checking: {filename}", i + 1, total_steps)
+                progress_callback(f"Checking: {filename}", i + 1, total_to_process)
                 
                 try:
+
+
+
+
+                    progress_callback("Pruning stale cache entries...", total_to_process, total_to_process)
+                    pruned_count = hm.prune_cache(set(all_files_on_disk))
+                    # self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
+            # --- END OF FIX ---
+            
+            
                     stat = os.stat(file_path)
                     current_mtime = stat.st_mtime
                     current_size = stat.st_size
@@ -1909,11 +2040,11 @@ class ParaFileManager(QMainWindow):
                     file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
                     
                     if not file_hash:
-                        progress_callback(f"Hashing: {filename}", i + 1, total_steps)
+                        progress_callback(f"Hashing: {filename}", i + 1, total_to_process)
                         file_hash = self.get_hash_for_file(file_path, current_size)
                         if file_hash:
                             hm.update_cache(file_path, current_mtime, current_size, file_hash)
-                    
+
                     if file_hash:
                         if file_hash not in hashes: hashes[file_hash] = []
                         hashes[file_hash].append(file_path)
@@ -1922,14 +2053,22 @@ class ParaFileManager(QMainWindow):
                     self.logger.warn(f"Could not access or hash {file_path}: {e}")
                     continue
 
-            # This is the final step. It updates the label and completes the progress bar to 100%.
-            progress_callback("Finalizing and cleaning cache...", total_steps, total_steps)
-            pruned_count = hm.prune_cache(set(all_files_on_disk))
-            self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
-        
+            # --- THIS IS THE FIX ---
+            # The pruning logic is now moved INSIDE the 'with' block,
+            # ensuring the database connection is still open.
+            progress_callback("Pruning stale cache entries...", total_to_process, total_to_process)
+            self.logger.info("Pruning stale entries from the hash cache...")
+            hm.prune_cache(set(all_files_on_disk))
+            self.logger.info("Cache pruning complete.")
+            # --- END OF FIX ---
+
         duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
         self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
         return duplicate_sets
+
+
+
+
 
 
 
