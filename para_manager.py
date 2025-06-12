@@ -902,6 +902,8 @@ class ParaFileManager(QMainWindow):
 
 # --- In the ParaFileManager class, REPLACE the __init__ method ---
 
+# --- In the ParaFileManager class, REPLACE the __init__ method ---
+
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
@@ -920,14 +922,12 @@ class ParaFileManager(QMainWindow):
         self.scan_rules = {}
         self.move_to_history = []
         
-        # --- Persistent User Data Paths ---
-        # All writable files now use the persistent user data directory.
+        # --- Persistent User Data Paths (Defined Early) ---
         self.config_path = get_user_data_path("config.json")
         self.rules_path = get_user_data_path("rules.json")
         self.scan_rules_path = get_user_data_path("scan_rules.json")
         self.hash_cache_db_path = get_user_data_path("hash_cache.db")
         self.index_cache_path = get_user_data_path("file_index.cache")
-        # Note: The logger is initialized outside and passed in with its path already set.
 
         # --- GPU & Caching Properties ---
         self.gpu_hashing_enabled = False
@@ -960,7 +960,8 @@ class ParaFileManager(QMainWindow):
         self.setAcceptDrops(True)
         self.init_ui()
         
-        self._ensure_config_files_exist()
+        # This can now be called safely as all path attributes are defined.
+        self._ensure_config_files_exist() 
         
         self.reload_configuration()
         self.check_gpu_availability()
