@@ -342,6 +342,81 @@ class ThemedTreeView(DropTreeView):
             
             painter.end()
 # --- DIALOGS ---
+
+
+class LogViewerDialog(QDialog):
+    def __init__(self, logger, parent=None):
+        super().__init__(parent)
+        self.logger = logger
+        self.setWindowTitle("Log Viewer")
+        self.setMinimumSize(900, 700)
+        self.setStyleSheet(parent.styleSheet())
+        
+        layout = QVBoxLayout(self)
+        controls_layout = QHBoxLayout()
+        self.date_combo = QComboBox()
+        controls_layout.addWidget(QLabel("Select Date:"))
+        controls_layout.addWidget(self.date_combo)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
+        
+        self.log_display = QTextBrowser()
+        self.log_display.setFont(QFont("Consolas", 10))
+        
+        # Set the background color to match the dark theme
+        palette = self.log_display.palette()
+        palette.setColor(QPalette.ColorRole.Base, QColor("#21252b"))
+        self.log_display.setPalette(palette)
+        
+        layout.addWidget(self.log_display)
+        
+        self.date_combo.currentIndexChanged.connect(self.load_log_for_date)
+        self.populate_dates()
+
+    def populate_dates(self):
+        self.date_combo.clear()
+        self.date_combo.addItems(self.logger.get_log_dates())
+
+    def load_log_for_date(self):
+        date_str = self.date_combo.currentText()
+        if not date_str:
+            self.log_display.setHtml("")
+            return
+
+        logs = self.logger.get_logs_for_date(date_str)
+        
+        color_timestamp = "#6c7380"
+        color_default = "#abb2bf"
+        color_info = "#63a37b"
+        color_warn = "#cda152"
+        color_error = "#b85c5c"
+        
+        html_lines = []
+        for line in logs.split('\n'):
+            line = line.replace("<", "&lt;").replace(">", "&gt;")
+            
+            main_color = color_default
+            if "[ERROR" in line: main_color = color_error
+            elif "[WARNING" in line: main_color = color_warn
+            elif "[INFO" in line: main_color = color_info
+
+            pre_style = 'style="margin: 0; padding: 2px 5px; white-space: pre-wrap;"'
+
+            if len(line) > 23 and line[19] == ' ' and '[' in line[20:29]:
+                timestamp = line[:19]
+                message = line[19:]
+                html_line = (
+                    f'<pre {pre_style}>'
+                    f'<span style="color: {color_timestamp};">{timestamp}</span>'
+                    f'<span style="color: {main_color};">{message}</span>'
+                    f'</pre>'
+                )
+                html_lines.append(html_line)
+            else:
+                html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
+
+        self.log_display.setHtml("".join(html_lines))
+        
 class FullScanResultDialog(QDialog):
     def __init__(self, processed_sets, parent=None):
         super().__init__(parent)
@@ -1296,10 +1371,12 @@ class ParaFileManager(QMainWindow):
             }
               
     #
-    # --- Core Logic with New Transparent Workflow ---
 
     def reload_configuration(self):
-        """Loads configuration from JSON and sets up the application mode."""
+        """
+        Loads all configuration from files, determines the operating mode,
+        and then triggers the file index loading or rebuilding.
+        """
         self.log_and_show("Reloading configuration...", "info", 2000)
         try:
             with open(resource_path("config.json"), "r") as f:
@@ -1307,13 +1384,14 @@ class ParaFileManager(QMainWindow):
 
             self.operating_mode = config.get("mode", "para")
             
+            # Determine the base directory based on the operating mode
             if self.operating_mode == "custom":
                 path = config.get("custom_folder_path")
                 if not (path and os.path.isdir(path)):
                     raise ValueError("Custom folder path is not set or invalid.")
                 self.base_dir = os.path.normpath(path)
                 self.para_root_paths = set()
-            else: 
+            else: # Default to PARA mode
                 self.operating_mode = "para"
                 path = config.get("base_directory")
                 if not path or not os.path.isdir(path):
@@ -1327,18 +1405,21 @@ class ParaFileManager(QMainWindow):
             self.move_to_history = config.get("move_to_history", [])
             custom_icons = config.get("custom_icons", {})
             self._load_para_icons(custom_icons)
+            
             with open(resource_path("rules.json"), "r") as f:
                 self.rules = json.load(f)
+        
         except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
             self.log_and_show(f"Configuration error: {e}. Please check settings.", "warn", 10000)
             self.logger.warn(f"Config load error: {e}")
             self.base_dir = None
-            self.update_ui_from_config()
+            self.update_ui_from_config() # Show the welcome screen on error
             return
             
+        # UI update must happen AFTER all config is loaded
         self.update_ui_from_config()
         
-        # --- Smarter Cache Loading Logic ---
+        # --- Centralized Cache Loading Logic ---
         try:
             with open(self.index_cache_path, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
@@ -1346,79 +1427,43 @@ class ParaFileManager(QMainWindow):
             if cache_data.get("base_dir") == self.base_dir:
                 self.logger.info("Valid cache found for current base directory.")
                 self.file_index = cache_data.get("file_index", [])
-                self.on_index_rebuilt(self.file_index, from_cache=True) # Pass flag to skip re-saving
+                self.on_index_rebuilt(self.file_index, from_cache=True)
                 return
             else:
                 self.logger.info("Cache found, but for a different base directory. Re-indexing.")
         except (FileNotFoundError, json.JSONDecodeError, KeyError):
             self.logger.info("No valid cache found. Performing full re-index.")
         
-        # If cache is invalid or not found, run the re-index task.
         self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
-
+        
+        
     def update_ui_from_config(self):
-
-
-
-
-
+        """
+        Updates the UI state based on pre-loaded configuration.
+        This method NO LONGER loads any data from files.
+        """
         if not self.base_dir:
             self.drop_frames_widget.setVisible(False)
             self.bottom_pane.setCurrentWidget(self.welcome_widget)
-            # ... set to welcome widget
             return
 
         is_para_mode = (self.operating_mode == "para")
         self.drop_frames_widget.setVisible(is_para_mode)
-        
-        
-        
-        
-        
-        # if not self.base_dir or not os.path.isdir(self.base_dir):
-        #     self.bottom_pane.setCurrentWidget(self.welcome_widget)
-        #     return
-        
-        for name, frame in self.drop_frames.items():
-            icon_label = frame.findChild(QLabel)
-            if icon_label:
-                # Get the loaded icon (custom or default) and set it
-                pixmap = self.para_category_icons[name].pixmap(QSize(64, 64))
-                icon_label.setPixmap(pixmap)
+
+        if is_para_mode:
+            for name, frame in self.drop_frames.items():
+                icon_label = frame.findChild(QLabel)
+                if icon_label and name in self.para_category_icons:
+                    pixmap = self.para_category_icons[name].pixmap(QSize(64, 64))
+                    icon_label.setPixmap(pixmap)
 
         self.bottom_pane.setCurrentWidget(self.tree_view)
-        
-        # self.bottom_pane.setCurrentWidget(self.tree_view)
         self.file_system_model.setRootPath(self.base_dir)
         self.tree_view.setRootIndex(self.file_system_model.index(self.base_dir))
         for i in range(1, self.file_system_model.columnCount()):
             self.tree_view.hideColumn(i)
         
-        self.log_and_show(f"Configuration loaded. Root: {self.base_dir}", "info")
-        
-        
-        
-        try:
-            # Check if cache is valid by comparing directory modification time
-            cache_stat = os.stat(self.index_cache_path)
-            dir_stat = os.stat(self.base_dir)
-            if cache_stat.st_mtime > dir_stat.st_mtime:
-                self.logger.info("Valid cache found, loading index from cache.")
-                with open(self.index_cache_path, 'r', encoding='utf-8') as f:
-                    self.file_index = json.load(f)
-                self.on_index_rebuilt(self.file_index) # Directly use the cached data
-                self.setup_file_watcher() # Start monitoring for changes
-                return # Skip the background task
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
-            self.logger.info("No valid cache found. Performing full re-index.")
-        
-        self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
-
-
-
-
-
-# --- REPLACE the on_scan_completed method in ParaFileManager with this one ---
+        self.log_and_show(f"Mode: {self.operating_mode.upper()}. Root: {self.base_dir}", "info")
 
     def on_scan_completed(self, result, dest_root, category_name):
         """
@@ -1512,38 +1557,6 @@ class ParaFileManager(QMainWindow):
                 break
         
 
-#--- REPLACE your on_index_rebuilt method with this one ---
-
-    # def on_index_rebuilt(self, index_data):
-    #     """This slot runs in the main thread to receive index results and update the UI."""
-    #     if self.progress and self.progress.isVisible():
-    #         self.progress.close() # Ensure progress dialog closes
-            
-    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
-    #     self.file_index = index_data
-        
-    #     # --- NEW: Save to cache and re-enable watcher ---
-    #     try:
-    #         with open(self.index_cache_path, 'w', encoding='utf-8') as f:
-    #             json.dump(self.file_index, f)
-    #         self.logger.info(f"File index cache saved to {self.index_cache_path}")
-    #         # This is the crucial final step: re-enable monitoring for EXTERNAL changes
-    #         # now that all internal operations are finished.
-    #         self._enable_watcher() 
-    #     except Exception as e:
-    #         self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
-
-    #     # Update the UI based on the new index
-    #     if self.search_bar.text().strip():
-    #          self.perform_search()
-    #     else:
-    #          self.bottom_pane.setCurrentWidget(self.tree_view)
-
-
-
-
-
-
 
     def on_index_rebuilt(self, index_data, from_cache=False):
         """Callback for when file index is built. Now handles cache saving."""
@@ -1554,7 +1567,7 @@ class ParaFileManager(QMainWindow):
         self.file_index = index_data
         
         if not from_cache:
-            # Only save the cache if the index was freshly built, not loaded.
+            # Only save the cache if the index was freshly built
             try:
                 cache_to_save = {
                     "base_dir": self.base_dir,
