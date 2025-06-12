@@ -1,4 +1,22 @@
-2025-06-12 22:26:54 [WARNING ] 清理操作已取消。
-2025-06-12 22:26:54 [INFO    ] Re-enabling file system watcher.
-2025-06-12 22:26:54 [INFO    ] Setting up file system watcher...
-2025-06-12 22:26:56 [INFO    ] Now monitoring 5708 directories for real-time changes.
+2025-06-13 02:47:13 [INFO    ] Reloading configuration...
+2025-06-13 02:47:13 [INFO    ] GPU acceleration is disabled or not available.
+2025-06-13 02:47:13 [INFO    ] Configuration loaded. Root: F:\para-file
+2025-06-13 02:47:13 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 02:47:14 [INFO    ] Indexing complete. 47298 items indexed.
+2025-06-13 02:47:14 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 02:47:14 [INFO    ] Re-enabling file system watcher.
+2025-06-13 02:47:14 [INFO    ] Setting up file system watcher...
+2025-06-13 02:47:17 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 02:47:17 [INFO    ] Setting up file system watcher...
+2025-06-13 02:47:20 [INFO    ] Now monitoring 9010 directories for real-time changes.
+2025-06-13 02:47:20 [WARNING ] Numba library not found. GPU acceleration is disabled.
+2025-06-13 02:47:20 [INFO    ] Application Started.
+2025-06-13 02:47:29 [INFO    ] --- 'start_full_scan' initiated by user. ---
+2025-06-13 02:47:30 [INFO    ] User confirmed 'Yes'. Preparing to run task...
+2025-06-13 02:47:30 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
+2025-06-13 02:47:30 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 02:47:30 [INFO    ] Starting intelligent full deduplication scan...
+2025-06-13 02:47:31 [INFO    ] Processing 1319 files using hash cache.
+2025-06-13 02:47:37 [INFO    ] Intelligent scan complete. Found 10 set(s) of duplicate files.
+2025-06-13 02:47:37 [INFO    ] Scan found duplicates. Pre-processing results for analytics dialog...
+2025-06-13 02:47:37 [INFO    ] Pre-processing complete. Passing 10 processed groups to dialog.
