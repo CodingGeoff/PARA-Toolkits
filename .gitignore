@@ -8,3 +8,5 @@ release_notes.md
 wallpaper.py
 b.py
 para_manager v1.2.py
+hash_cache.db
+file_index.cache
