@@ -8,3 +8,19 @@ Traceback (most recent call last):
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "<frozen ntpath>", line 791, in relpath
 ValueError: path is on mount 'F:', start on mount 'C:'
+
+--- FATAL CRASH AT 2025-06-13 03:48:06.461979 ---
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 3262, in open_settings_dialog
+    self.reload_configuration()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1339, in reload_configuration
+    self.update_ui_from_config()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1409, in update_ui_from_config
+    self.on_index_rebuilt(self.file_index) # Directly use the cached data
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1571, in on_index_rebuilt
+    self.perform_search()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2311, in perform_search
+    self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+                                                                               ~~~~^^^^^^^^^^^^^^
+TypeError: string indices must be integers, not 'str'

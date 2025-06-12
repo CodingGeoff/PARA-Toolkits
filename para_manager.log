@@ -94,3 +94,62 @@ Traceback (most recent call last):
   File "<frozen ntpath>", line 791, in relpath
 ValueError: path is on mount 'F:', start on mount 'C:'
 
+2025-06-13 03:47:32 [INFO    ] Logger initialized.
+2025-06-13 03:47:32 [INFO    ] Reloading configuration...
+2025-06-13 03:47:32 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:47:32 [INFO    ] Configuration loaded. Root: C:\Users\39932\Music
+2025-06-13 03:47:32 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:47:32 [INFO    ] No valid cache found. Performing full re-index.
+2025-06-13 03:47:32 [INFO    ] --- 'run_task' called for task: _task_rebuild_file_index ---
+2025-06-13 03:47:32 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 03:47:32 [INFO    ] Rebuilding file index...
+2025-06-13 03:47:32 [INFO    ] No valid cache found. Performing full re-index.
+2025-06-13 03:47:32 [INFO    ] --- 'run_task' called for task: _task_rebuild_file_index ---
+2025-06-13 03:47:32 [WARNING ] Task aborted: A previous worker is still running.
+2025-06-13 03:47:32 [WARNING ] A background task is already running.
+2025-06-13 03:47:32 [WARNING ] Numba library not found. GPU acceleration is disabled.
+2025-06-13 03:47:32 [INFO    ] Application Started.
+2025-06-13 03:47:33 [INFO    ] Indexing complete. Found 454 items.
+2025-06-13 03:47:33 [INFO    ] Indexing complete. 454 items indexed.
+2025-06-13 03:47:33 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:47:33 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:47:33 [INFO    ] Setting up file system watcher...
+2025-06-13 03:47:33 [INFO    ] Now monitoring 441 directories for real-time changes.
+2025-06-13 03:47:39 [INFO    ] --- 'start_full_scan' initiated by user. ---
+2025-06-13 03:47:40 [INFO    ] User confirmed 'Yes'. Preparing to run task...
+2025-06-13 03:47:40 [INFO    ] --- 'run_task' called for task: _task_full_deduplication_scan ---
+2025-06-13 03:47:40 [INFO    ] Worker created and all signals connected. Starting thread...
+2025-06-13 03:47:40 [INFO    ] Starting Developer-Aware scan...
+2025-06-13 03:47:40 [INFO    ] Scan filtering complete. Excluded 75 development/system files.
+2025-06-13 03:47:40 [INFO    ] Processing 379 files using hash cache.
+2025-06-13 03:47:43 [INFO    ] Cache pruning complete. Pruned 1318 stale entries.
+2025-06-13 03:47:43 [INFO    ] Intelligent scan complete. Found 0 set(s) of duplicate files.
+2025-06-13 03:47:44 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:47:44 [INFO    ] Setting up file system watcher...
+2025-06-13 03:47:45 [INFO    ] Now monitoring 441 directories for real-time changes.
+2025-06-13 03:48:06 [INFO    ] Settings saved. Reloading configuration...
+2025-06-13 03:48:06 [INFO    ] Reloading configuration...
+2025-06-13 03:48:06 [INFO    ] Successfully loaded developer-aware scan rules.
+2025-06-13 03:48:06 [INFO    ] Configuration loaded. Root: C:\Users\39932\Pictures
+2025-06-13 03:48:06 [INFO    ] Valid cache found, loading index from cache.
+2025-06-13 03:48:06 [INFO    ] Indexing complete. 2 items indexed.
+2025-06-13 03:48:06 [INFO    ] File index cache saved to d:\LenovoQMDownload\1_Projects\PARA Toolkits\file_index.cache
+2025-06-13 03:48:06 [INFO    ] Re-enabling file system watcher.
+2025-06-13 03:48:06 [INFO    ] Setting up file system watcher...
+2025-06-13 03:48:06 [INFO    ] Now monitoring 17 directories for real-time changes.
+2025-06-13 03:48:06 [ERROR   ] A fatal, unhandled exception occurred:
+Traceback (most recent call last):
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 3262, in open_settings_dialog
+    self.reload_configuration()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1339, in reload_configuration
+    self.update_ui_from_config()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1409, in update_ui_from_config
+    self.on_index_rebuilt(self.file_index) # Directly use the cached data
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 1571, in on_index_rebuilt
+    self.perform_search()
+  File "d:\LenovoQMDownload\1_Projects\PARA Toolkits\para_manager.py", line 2311, in perform_search
+    self.current_search_results = [item for item in self.file_index if term in item["name_lower"]]
+                                                                               ~~~~^^^^^^^^^^^^^^
+TypeError: string indices must be integers, not 'str'
+

@@ -1297,58 +1297,64 @@ class ParaFileManager(QMainWindow):
               
     #
     # --- Core Logic with New Transparent Workflow ---
+
     def reload_configuration(self):
+        """Loads configuration from JSON and sets up the application mode."""
         self.log_and_show("Reloading configuration...", "info", 2000)
         try:
-
-               
-                
-            # with open(resource_path("config.json"), "r") as f:
-            #     config = json.load(f)
-            #     path = config.get("base_directory")
-            # if not path:
-            #     raise ValueError("Base directory not set in config.")
-            # self.base_dir = os.path.normpath(path)
-            # os.makedirs(self.base_dir, exist_ok=True)
-            # with open(resource_path("rules.json"), "r") as f:
-            #     self.rules = json.load(f)
-            self._load_scan_rules()
             with open(resource_path("config.json"), "r") as f:
                 config = json.load(f)
-                        # Load the move history from the config file
-            self.move_to_history = config.get("move_to_history", [])
+
+            self.operating_mode = config.get("mode", "para")
             
-            # custom_icons = config.get("custom_icons", {})
-            path = config.get("base_directory")
-            if not path:
-                raise ValueError("Base directory not set in config.")
+            if self.operating_mode == "custom":
+                path = config.get("custom_folder_path")
+                if not (path and os.path.isdir(path)):
+                    raise ValueError("Custom folder path is not set or invalid.")
+                self.base_dir = os.path.normpath(path)
+                self.para_root_paths = set()
+            else: 
+                self.operating_mode = "para"
+                path = config.get("base_directory")
+                if not path or not os.path.isdir(path):
+                    raise ValueError("PARA Base directory not set or invalid.")
+                self.base_dir = os.path.normpath(path)
+                self.para_root_paths = {os.path.join(self.base_dir, p) for p in self.para_folders.values()}
 
-
-            self.base_dir = os.path.normpath(path)
-            self.para_root_paths = {os.path.join(self.base_dir, p) for p in self.para_folders.values()} # <-- ADD THIS LINE
             os.makedirs(self.base_dir, exist_ok=True)
-
-
+            self._load_scan_rules()
             self.gpu_hashing_enabled = config.get("gpu_hashing_enabled", False)
-            if self.gpu_hashing_enabled and self.gpu_available:
-                self.log_and_show("GPU acceleration is ENABLED.", "info")
-            else:
-                self.log_and_show("GPU acceleration is disabled or not available.", "info")
-                 
-            # Load custom icons paths here
+            self.move_to_history = config.get("move_to_history", [])
             custom_icons = config.get("custom_icons", {})
             self._load_para_icons(custom_icons)
-            
             with open(resource_path("rules.json"), "r") as f:
                 self.rules = json.load(f)
-                
         except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
-            self.log_and_show(f"Configuration incomplete. Please set a valid base directory.", "warn")
+            self.log_and_show(f"Configuration error: {e}. Please check settings.", "warn", 10000)
             self.logger.warn(f"Config load error: {e}")
-            self.bottom_pane.setCurrentWidget(self.welcome_widget)
+            self.base_dir = None
+            self.update_ui_from_config()
             return
-        
+            
         self.update_ui_from_config()
+        
+        # --- Smarter Cache Loading Logic ---
+        try:
+            with open(self.index_cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            # CRITICAL CHECK: Ensure the cache was built for the CURRENT base directory.
+            if cache_data.get("base_dir") == self.base_dir:
+                self.logger.info("Valid cache found for current base directory.")
+                self.file_index = cache_data.get("file_index", [])
+                self.on_index_rebuilt(self.file_index, from_cache=True) # Pass flag to skip re-saving
+                return
+            else:
+                self.logger.info("Cache found, but for a different base directory. Re-indexing.")
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            self.logger.info("No valid cache found. Performing full re-index.")
+        
+        # If cache is invalid or not found, run the re-index task.
+        self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt)
 
     def update_ui_from_config(self):
 
@@ -1451,12 +1457,7 @@ class ParaFileManager(QMainWindow):
     
     #--- REPLACE your on_index_rebuilt method with this one ---
 
-    # def on_index_rebuilt(self, index_data):
-    #     """This slot runs in the main thread to receive index results and update the UI."""
-    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
-    #     self.file_index = index_data
-    #     # Now it's safe to call perform_search to refresh the UI
-    #     self.perform_search()
+
 
 # In ParaFileManager, REPLACE this method
 
@@ -1510,183 +1511,68 @@ class ParaFileManager(QMainWindow):
                     pass
                 break
         
-    # def on_index_rebuilt(self, index_data):
-    #     """This slot runs in the main thread to receive index results and update the UI."""
-    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
-    #     self.file_index = index_data
-        
-    #     # --- NEW: Save to cache and setup watcher ---
-    #     try:
-    #         with open(self.index_cache_path, 'w', encoding='utf-8') as f:
-    #             json.dump(self.file_index, f)
-    #         self.logger.info(f"File index cache saved to {self.index_cache_path}")
-    #         self.setup_file_watcher() # Start monitoring AFTER a successful index
-    #     except Exception as e:
-    #         self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
-
-    #     self.perform_search() # Update search/UI
-
-    # def on_index_rebuilt(self, index_data):
-    #     """This slot runs in the main thread to receive index results and update the UI."""
-    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
-    #     self.file_index = index_data
-        
-    #     try:
-    #         with open(self.index_cache_path, 'w', encoding='utf-8') as f:
-    #             json.dump(self.file_index, f)
-    #         self.logger.info(f"File index cache saved to {self.index_cache_path}")
-    #         self.setup_file_watcher()
-    #     except Exception as e:
-    #         self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
-
-    #     # FIX: Directly switch to the tree view instead of calling perform_search
-    #     if not self.search_bar.text().strip():
-    #          self.bottom_pane.setCurrentWidget(self.tree_view)
-    # # --- Background Tasks (Workers) ---
-    
-    # --- ADD THIS NEW TASK to the ParaFileManager class ---
 
 #--- REPLACE your on_index_rebuilt method with this one ---
 
-    def on_index_rebuilt(self, index_data):
-        """This slot runs in the main thread to receive index results and update the UI."""
+    # def on_index_rebuilt(self, index_data):
+    #     """This slot runs in the main thread to receive index results and update the UI."""
+    #     if self.progress and self.progress.isVisible():
+    #         self.progress.close() # Ensure progress dialog closes
+            
+    #     self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
+    #     self.file_index = index_data
+        
+    #     # --- NEW: Save to cache and re-enable watcher ---
+    #     try:
+    #         with open(self.index_cache_path, 'w', encoding='utf-8') as f:
+    #             json.dump(self.file_index, f)
+    #         self.logger.info(f"File index cache saved to {self.index_cache_path}")
+    #         # This is the crucial final step: re-enable monitoring for EXTERNAL changes
+    #         # now that all internal operations are finished.
+    #         self._enable_watcher() 
+    #     except Exception as e:
+    #         self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
+
+    #     # Update the UI based on the new index
+    #     if self.search_bar.text().strip():
+    #          self.perform_search()
+    #     else:
+    #          self.bottom_pane.setCurrentWidget(self.tree_view)
+
+
+
+
+
+
+
+    def on_index_rebuilt(self, index_data, from_cache=False):
+        """Callback for when file index is built. Now handles cache saving."""
         if self.progress and self.progress.isVisible():
-            self.progress.close() # Ensure progress dialog closes
+            self.progress.close()
             
         self.log_and_show(f"Indexing complete. {len(index_data)} items indexed.", "info", 2000)
         self.file_index = index_data
         
-        # --- NEW: Save to cache and re-enable watcher ---
-        try:
-            with open(self.index_cache_path, 'w', encoding='utf-8') as f:
-                json.dump(self.file_index, f)
-            self.logger.info(f"File index cache saved to {self.index_cache_path}")
-            # This is the crucial final step: re-enable monitoring for EXTERNAL changes
-            # now that all internal operations are finished.
-            self._enable_watcher() 
-        except Exception as e:
-            self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
-
-        # Update the UI based on the new index
+        if not from_cache:
+            # Only save the cache if the index was freshly built, not loaded.
+            try:
+                cache_to_save = {
+                    "base_dir": self.base_dir,
+                    "file_index": self.file_index
+                }
+                with open(self.index_cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(cache_to_save, f)
+                self.logger.info(f"File index cache saved to {self.index_cache_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to save file index cache: {e}", exc_info=True)
+        
+        self._enable_watcher() 
         if self.search_bar.text().strip():
-             self.perform_search()
-        else:
-             self.bottom_pane.setCurrentWidget(self.tree_view)
-
-    # # In class ParaFileManager, REPLACE this method
-    # def _calculate_retention_score(self, path):
-    #     """
-    #     Calculates a comprehensive retention score for a file path based on a rich set of heuristics.
-    #     A higher score means the file is more likely to be the one a user wants to keep.
-    #     """
-    #     score = 100  # Start with a baseline score
-    #     reasons = []
-    #     path_lower = path.lower()
-    #     filename = os.path.basename(path_lower)
-    #     name_part, _ = os.path.splitext(filename)
-
-    #     # --- Path-Based Scoring ---
-    #     category = self.get_category_from_path(path)
-    #     if category == "Projects":
-    #         score += 50
-    #         reasons.append("(+50) In 'Projects' folder")
-    #     elif category == "Areas":
-    #         score += 30
-    #         reasons.append("(+30) In 'Areas' folder")
-    #     elif category == "Resources":
-    #         score += 10
-    #         reasons.append("(+10) In 'Resources' folder")
-    #     elif category == "Archives":
-    #         score -= 25
-    #         reasons.append("(-25) In 'Archives' folder")
-
-    #     # Penalize common temporary/unorganized locations
-    #     if any(temp_loc in path_lower for temp_loc in ['/downloads/', '/desktop/']):
-    #         score -= 40
-    #         reasons.append("(-40) Located in Downloads/Desktop")
-
-    #     # Penalize deep paths (shallower is better)
-    #     depth = path.count(os.sep) - self.base_dir.count(os.sep)
-    #     if depth > 5:
-    #         score -= depth * 3
-    #         reasons.append(f"(-{depth*3}) Deep path ({depth} levels)")
-
-    #     # --- Filename-Based Scoring ---
-    #     # Reward filenames with descriptive, readable words
-    #     words = re.findall(r'[a-zA-Z]{4,}', name_part)
-    #     if len(words) > 1:
-    #         score += len(words) * 5
-    #         reasons.append(f"(+{len(words)*5}) Contains {len(words)} readable words")
-        
-    #     # Reward filenames with date patterns (ISO format is best)
-    #     if re.search(r'\d{4}-\d{2}-\d{2}', name_part):
-    #         score += 30
-    #         reasons.append("(+30) Contains YYYY-MM-DD date")
-
-    #     # Heavily penalize filenames indicating they are copies or conflicts
-    #     if re.search(r'(_copy)|(_conflict)|(\(\d+\))|(_duplicate)', name_part):
-    #         score -= 100
-    #         reasons.append("(-100) Filename suggests it is a copy")
+            self.perform_search()
+        elif self.base_dir:
+            self.bottom_pane.setCurrentWidget(self.tree_view)
             
-    #     # Penalize filenames that look like hashes or random strings
-    #     if len(name_part) > 30 and ' ' not in name_part and len(re.findall(r'\d', name_part)) > 8:
-    #         score -= 75
-    #         reasons.append("(-75) Filename appears to be a machine-generated ID")
-
-    #     # Combine reasons for a clear explanation
-    #     reason_str = ", ".join(reasons) if reasons else "Standard file"
-    #     return score, reason_str
-
-#--- ADD THIS ENTIRELY NEW METHOD to the ParaFileManager class ---
-
-    # def _calculate_retention_score(self, path):
-    #     """
-    #     Calculates a retention score for a file path.
-    #     A higher score means the file is more likely the one to keep.
-    #     """
-    #     score = 100  # Start with a baseline score
-    #     reasons = []
-    #     path_lower = path.lower()
-    #     filename = os.path.basename(path_lower)
-    #     name_part, _ = os.path.splitext(filename)
-
-    #     # --- Path-Based Scoring ---
-    #     category = self.get_category_from_path(path)
-    #     if category == "Projects":
-    #         score += 50; reasons.append("(+50) In 'Projects'")
-    #     elif category == "Areas":
-    #         score += 30; reasons.append("(+30) In 'Areas'")
-    #     elif category == "Resources":
-    #         score += 10; reasons.append("(+10) In 'Resources'")
-    #     elif category == "Archives":
-    #         score -= 25; reasons.append("(-25) In 'Archives'")
-
-    #     if any(temp_loc in path_lower for temp_loc in ['/downloads/', '/desktop/']):
-    #         score -= 40; reasons.append("(-40) In Downloads/Desktop")
-
-    #     depth = path.count(os.sep) - self.base_dir.count(os.sep)
-    #     if depth > 5:
-    #         score -= depth * 3; reasons.append(f"(-{depth*3}) Deep path")
-
-    #     # --- Filename-Based Scoring ---
-    #     words = re.findall(r'[a-zA-Z]{4,}', name_part)
-    #     if len(words) > 1:
-    #         score += len(words) * 5; reasons.append(f"(+{len(words)*5}) Descriptive name")
-        
-    #     if re.search(r'\d{4}-\d{2}-\d{2}', name_part):
-    #         score += 30; reasons.append("(+30) Has YYYY-MM-DD date")
-
-    #     if re.search(r'(_copy)|(_conflict)|(\(\d+\))|(_duplicate)', name_part):
-    #         score -= 100; reasons.append("(-100) Filename is a copy")
             
-    #     if len(name_part) > 30 and ' ' not in name_part and len(re.findall(r'\d', name_part)) > 8:
-    #         score -= 75; reasons.append("(-75) Appears machine-generated")
-
-    #     reason_str = ", ".join(reasons) if reasons else "Standard file"
-    #     return score, reason_str
-
-
-
 # --- 在 ParaFileManager 中，替换 _calculate_retention_score 方法 ---
 
     def _calculate_retention_score(self, path):
@@ -2481,6 +2367,28 @@ class ParaFileManager(QMainWindow):
                 path_text = sub_path
             else:
                 path_text = rel_path
+            
+            
+            
+            
+            
+
+
+            try:
+                # Check if drives are the same before creating a relative path
+                path_drive = os.path.splitdrive(path)[0]
+                base_drive = os.path.splitdrive(self.base_dir)[0]
+                if path_drive.lower() == base_drive.lower():
+                    rel_path = os.path.relpath(os.path.dirname(path), self.base_dir)
+                else:
+                    # Fallback for different drives: show the absolute directory
+                    rel_path = os.path.dirname(path)
+            except ValueError:
+                # General fallback in case of other path errors
+                rel_path = os.path.dirname(path)
+                
+                
+                
 
             display_path = path_text.replace(os.sep, "  ▶  ")
             path_label = QLabel(f"<span id='SearchResultPath'>{display_path}</span>")
