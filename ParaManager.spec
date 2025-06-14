@@ -1,22 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# A robust .spec file for ParaManager
+
 a = Analysis(
     ['para_manager.py'],
-    pathex=[],
+    pathex=['.'],  # Explicitly add the current directory to the path
     binaries=[],
-    # datas should ONLY include read-only assets bundled with the app.
-    # User-writable files like configs and logs are now handled automatically.
+    # 'datas' is for read-only assets you want inside the package.
+    # Config files are correctly OMITTED here and handled by the app's code.
     datas=[
         ('icon.ico', '.'),
         ('release_notes.md', '.')
     ],
-    # send2trash is needed. tqdm is not, as it's for command-line progress bars.
-    hiddenimports=['send2trash'],
+    # hiddenimports tells PyInstaller about libraries that might be missed.
+    hiddenimports=['send2trash', 'numba'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # The excludes list is a good safety net, but a clean venv is the real solution.
-    excludes=['pandas', 'numpy', 'scipy', 'matplotlib', 'PIL', 'IPython', 'pytest', 'jedi', 'tornado', 'zmq', 'hanlp', 'skll', 'wandb', 'pygame', 'PyQt5', 'PySide6'],
+    # 'excludes' is a good practice to keep the package size down,
+    # but the virtual environment is the primary way we avoid unwanted packages.
+    excludes=[], 
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
@@ -34,28 +37,30 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True, # Enable UPX compression. Ensure upx.exe is in your PATH.
+    upx=True,
     runtime_tmpdir=None,
-    console=False, # This creates a windowed application (no console).
+    console=False,  # This creates a windowed GUI application (no console pops up).
     icon='icon.ico',
 )
 
-# coll = COLLECT(
+# Using COLLECT for a one-folder bundle is great for testing.
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='ParaManager_App' # The name of the output folder in the 'dist' directory.
+)
+
+# For a final single-file executable, comment out the 'coll = COLLECT(...)' block above
+# and uncomment the 'bundle = BUNDLE(...)' block below.
+#
+# bundle = BUNDLE(
 #     exe,
-#     a.binaries,
-#     a.zipfiles,
-#     a.datas,
-#     strip=False,
-#     upx=True,
-#     upx_exclude=[],
-#     name='ParaManager' # This is the name of the output FOLDER.
+#     name='ParaManager.exe',
+#     icon='icon.ico',
+#     bundle_identifier=None,
 # )
-
-# For the final single-file bundle, uncomment the BUNDLE block
-# and comment out the COLLECT block above.
-BUNDLE(
-exe,
-    name='ParaManager.exe',
-    icon='icon.ico',
-    bundle_identifier=None,
-)

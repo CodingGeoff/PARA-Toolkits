@@ -11,7 +11,7 @@ import re
 import sqlite3
 import tempfile
 
-# Required libraries: pip install PyQt6 send2trash numba
+# Required libraries: pip install PyQt6 send2trash numba pillow
 try:
     import send2trash
 except ImportError:
@@ -19,7 +19,6 @@ except ImportError:
     sys.exit(1)
 
 try:
-    # Numba is optional for GPU acceleration
     from numba import cuda
     NUMBA_AVAILABLE = True
 except ImportError:
@@ -44,11 +43,9 @@ from PyQt6.QtCore import (
 
 # --- GLOBAL EXCEPTION HOOK ---
 def global_exception_hook(exctype, value, tb, window=None):
-    """A global hook to catch ALL unhandled exceptions."""
     traceback_details = "".join(traceback.format_exception(exctype, value, tb))
     error_message_for_details = (
-        "An unexpected error has occurred, and the application needs to close.\n\n"
-        "Please provide the following details to the developer.\n\n"
+        f"An unexpected error occurred:\n\n"
         f"Error Type: {exctype.__name__}\n"
         f"Error Message: {value}\n\n"
         f"Traceback:\n{traceback_details}"
@@ -57,6 +54,7 @@ def global_exception_hook(exctype, value, tb, window=None):
         main_logger.error("A fatal, unhandled exception occurred:\n" + traceback_details)
     except (NameError, AttributeError): pass
     try:
+        # Note: This log might also fail if the issue is path-related on startup.
         with open("crash_report.log", "a", encoding="utf-8") as f:
             f.write(f"\n--- FATAL CRASH AT {datetime.now()} ---\n{traceback_details}")
     except Exception as e:
@@ -66,10 +64,7 @@ def global_exception_hook(exctype, value, tb, window=None):
     error_box.setIcon(QMessageBox.Icon.Critical)
     error_box.setWindowTitle("Application Error")
     error_box.setText("A critical error occurred and the application must close.")
-    error_box.setInformativeText(
-        "The error has been logged to 'crash_report.log'.\n"
-        "Please click 'Show Details' to copy the error information."
-    )
+    error_box.setInformativeText("The error has been logged to 'crash_report.log'.")
     error_box.setDetailedText(error_message_for_details)
     error_box.setMinimumSize(700, 250)
     if window:
@@ -82,22 +77,32 @@ def global_exception_hook(exctype, value, tb, window=None):
 
 # --- UTILITY FUNCTIONS ---
 
+# def get_user_data_path(filename):
+#     """Returns a persistent path in the user's app data directory."""
+#     app_name = "ParaManagerEVO"
+#     if sys.platform == "win32":
+#         data_dir = os.path.join(os.getenv('APPDATA'), app_name)
+#     else: # For macOS and Linux
+#         data_dir = os.path.join(os.path.expanduser('~'), '.config', app_name)
+#     os.makedirs(data_dir, exist_ok=True)
+#     return os.path.join(data_dir, filename)
 
-
-# --- ADD THIS NEW UTILITY FUNCTION ---
+# In the UTILITY FUNCTIONS section
 
 def get_user_data_path(filename):
-    """
-    Returns a persistent path in the user's app data directory.
-    Creates the directory if it doesn't exist.
-    """
-    app_name = "ParaManagerEVO" # You can change this to your app's name
+    """Returns a persistent path in the user's app data directory."""
+    app_name = "ParaManagerEVO"
     if sys.platform == "win32":
+        # On Windows, this is typically C:\Users\<user>\AppData\Roaming\ParaManagerEVO
         data_dir = os.path.join(os.getenv('APPDATA'), app_name)
     else: # For macOS and Linux
+        # On Linux, this is typically /home/<user>/.config/ParaManagerEVO
+        # On macOS, this is typically /Users/<user>/.config/ParaManagerEVO
         data_dir = os.path.join(os.path.expanduser('~'), '.config', app_name)
     
+    # Create the directory if it doesn't exist
     os.makedirs(data_dir, exist_ok=True)
+    
     return os.path.join(data_dir, filename)
 
 def format_size(size_bytes):
@@ -106,7 +111,7 @@ def format_size(size_bytes):
     power = 1024
     n = 0
     power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
-    while size_bytes >= power and n < len(power_labels) -1:
+    while size_bytes >= power and n < len(power_labels) - 1:
         size_bytes /= power
         n += 1
     return f"{size_bytes:.2f} {power_labels[n]}"
@@ -122,6 +127,7 @@ def calculate_hash(file_path, block_size=65536):
         return None
 
 def resource_path(relative_path):
+    """Gets the absolute path to a bundled, read-only resource."""
     try:
         base_path = sys._MEIPASS
     except AttributeError:
@@ -131,17 +137,14 @@ def resource_path(relative_path):
 def get_all_files_in_paths(paths):
     all_files = []
     for path in paths:
-        if os.path.isfile(path):
-            all_files.append(path)
+        if os.path.isfile(path): all_files.append(path)
         elif os.path.isdir(path):
             for root, _, files in os.walk(path):
-                for name in files:
-                    all_files.append(os.path.join(root, name))
+                for name in files: all_files.append(os.path.join(root, name))
     return all_files
 
 # --- HELPER & WORKER CLASSES ---
 class Worker(QThread):
-    """A generic worker thread for running background tasks."""
     result = pyqtSignal(object)
     error = pyqtSignal(str)
     progress = pyqtSignal(str, int, int)
@@ -158,9 +161,8 @@ class Worker(QThread):
             self.error.emit(traceback.format_exc())
 
 class Logger:
-    """A simple file-based logger."""
     def __init__(self, filename="para_manager.log"):
-        self.log_file = resource_path(filename)
+        self.log_file = filename # Expect a full path
         self.log_format = "{timestamp} [{level:<8}] {message}"
         self.info("Logger initialized.")
     def _write(self, level, message):
@@ -196,6 +198,763 @@ class Logger:
         except FileNotFoundError: pass
         return "\n".join(logs)
 
+class HashManager:
+    def __init__(self, db_path, logger):
+        self.db_path = db_path
+        self.logger = logger
+        self.connection = None
+        self.cursor = None
+    def __enter__(self):
+        try:
+            self.connection = sqlite3.connect(self.db_path)
+            self.cursor = self.connection.cursor()
+            self._setup_database()
+        except sqlite3.Error as e:
+            self.logger.error(f"FATAL: Could not connect to hash database: {e}")
+            raise
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.connection:
+            self.connection.commit()
+            self.connection.close()
+    def _setup_database(self):
+        self.cursor.execute("CREATE TABLE IF NOT EXISTS hash_cache (file_path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, file_hash TEXT NOT NULL, last_checked REAL NOT NULL)")
+        self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON hash_cache (file_path)")
+    def get_cached_hash(self, file_path, mtime, size):
+        self.cursor.execute("SELECT mtime, size, file_hash FROM hash_cache WHERE file_path = ?", (file_path,))
+        result = self.cursor.fetchone()
+        if result:
+            cached_mtime, cached_size, cached_hash = result
+            if cached_mtime == mtime and cached_size == size:
+                return cached_hash
+        return None
+    def update_cache(self, file_path, mtime, size, file_hash):
+        now = datetime.now().timestamp()
+        self.cursor.execute("INSERT OR REPLACE INTO hash_cache VALUES (?, ?, ?, ?, ?)", (file_path, mtime, size, file_hash, now))
+    def prune_cache(self, valid_paths_set):
+        self.cursor.execute("SELECT file_path FROM hash_cache")
+        cached_paths = {row[0] for row in self.cursor.fetchall()}
+        paths_to_delete = list(cached_paths - valid_paths_set)
+        if paths_to_delete:
+            self.cursor.executemany("DELETE FROM hash_cache WHERE file_path = ?", [(p,) for p in paths_to_delete])
+            self.connection.commit()
+        return len(paths_to_delete)
+
+# --- CUSTOM UI WIDGETS ---
+class ActionWidget(QWidget):
+    keep_requested = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 0, 5, 0)
+        layout.setSpacing(5)
+        style = self.style()
+        self.keep_button = QPushButton(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton), "")
+        self.keep_button.setToolTip("保留这个文件，并清理此组中的其他文件。")
+        self.keep_button.setCheckable(True)
+        self.keep_button.setChecked(False)
+        self.keep_button.toggled.connect(lambda checked: self.keep_requested.emit() if checked else None)
+        layout.addWidget(self.keep_button)
+
+class DropFrame(QFrame):
+    def __init__(self, category_name, icon, main_window):
+        super().__init__(main_window)
+        self.category_name = category_name
+        self.main_window = main_window
+        self.setAcceptDrops(True)
+        self.setProperty("category", category_name)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label = QLabel()
+        icon_label.setPixmap(icon.pixmap(QSize(48, 48)))
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        title_label = QLabel(category_name)
+        title_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.main_window.set_drop_frame_style(True)
+            
+    def dropEvent(self, event):
+        source_paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        if source_paths:
+            self.main_window.process_dropped_items(source_paths, self.category_name)
+        self.main_window.reset_drop_frame_styles()
+        event.acceptProposedAction()
+
+class DropTreeView(QTreeView):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.setAcceptDrops(True)
+        self.setDragDropMode(self.DragDropMode.DropOnly)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.main_window.show_context_menu)
+        self.doubleClicked.connect(self.main_window.open_selected_item)
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls(): event.acceptProposedAction()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls(): event.acceptProposedAction()
+    
+    def dropEvent(self, event):
+        index = self.indexAt(event.position().toPoint())
+        if not index.isValid(): return
+        
+        target_dir_path = self.model().filePath(index) if self.model().isDir(index) else os.path.dirname(self.model().filePath(index))
+        category_name = self.main_window.get_category_from_path(target_dir_path)
+        
+        if category_name:
+            files = [url.toLocalFile() for url in event.mimeData().urls()]
+            self.main_window.process_dropped_items(files, category_name, specific_target_dir=target_dir_path)
+        
+        event.acceptProposedAction()
+
+class ThemedTreeView(DropTreeView):
+    def __init__(self, main_window):
+        super().__init__(main_window)
+        self.background_text = ""
+    def setBackgroundText(self, text):
+        if self.background_text != text:
+            self.background_text = text
+            self.viewport().update()
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.background_text:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            font = QFont("Segoe UI", 120, QFont.Weight.ExtraBold)
+            painter.setFont(font)
+            painter.setPen(QColor(200, 200, 200, 15))
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.background_text)
+            painter.end()
+
+
+
+
+
+
+
+
+# In your UI DIALOGS section, REPLACE the entire MoveToDialog class
+class MoveToDialog(QDialog):
+    """A dialog to select a destination folder, now with history and favorites."""
+    def __init__(self, base_path, source_paths, history, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Move Items To...")
+        self.setMinimumSize(550, 600)
+        self.setStyleSheet(parent.styleSheet())
+        self.destination_path = None
+        self.history = history
+
+        layout = QVBoxLayout(self)
+
+        # --- NEW: History ComboBox ---
+        history_layout = QHBoxLayout()
+        history_layout.addWidget(QLabel("Recent Destinations:"))
+        self.history_combo = QComboBox()
+        self.history_combo.setPlaceholderText("Select from recently used folders...")
+        if self.history:
+            self.history_combo.addItems(self.history)
+        self.history_combo.activated.connect(self.on_history_selected)
+        history_layout.addWidget(self.history_combo)
+        layout.addLayout(history_layout)
+
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        # --- Tree View for Navigation ---
+        layout.addWidget(QLabel("Or browse for a new destination:"))
+        self.model = QFileSystemModel()
+        self.model.setRootPath(base_path)
+        self.model.setFilter(QDir.Filter.NoDotAndDotDot | QDir.Filter.AllDirs)
+
+        self.tree = QTreeView()
+        self.tree.setModel(self.model)
+        self.tree.setRootIndex(self.model.index(base_path))
+        for i in range(1, self.model.columnCount()):
+            self.tree.setColumnHidden(i, True)
+        self.tree.clicked.connect(self.on_tree_clicked)
+        layout.addWidget(self.tree)
+        
+        # --- Selected Path Display ---
+        self.selected_path_label = QLineEdit()
+        self.selected_path_label.setReadOnly(True)
+        self.selected_path_label.setPlaceholderText("No folder selected")
+        layout.addWidget(self.selected_path_label)
+
+        # --- OK and Cancel Buttons ---
+        self.ok_button = QPushButton("OK")
+        self.ok_button.setEnabled(False)
+        self.ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(self.ok_button)
+        layout.addLayout(button_layout)
+
+    def on_history_selected(self, index):
+        """When a path is chosen from history, select it."""
+        path = self.history_combo.itemText(index)
+        self.set_destination(path)
+        # Also select it in the tree view for visual feedback
+        self.tree.setCurrentIndex(self.model.index(path))
+
+    def on_tree_clicked(self, index):
+        """When a folder is clicked in the tree, update the selection."""
+        path = self.model.filePath(index)
+        self.set_destination(path)
+
+    def set_destination(self, path):
+        """Central method to set the chosen destination path."""
+        self.destination_path = path
+        self.selected_path_label.setText(path)
+        self.ok_button.setEnabled(True)
+
+    def accept(self):
+        if self.destination_path:
+            super().accept()
+            
+
+# --- REPLACE the entire FullScanResultDialog class with this corrected version ---
+
+# class FullScanResultDialog(QDialog):
+#     def __init__(self, processed_sets, parent=None):
+#         super().__init__(parent)
+#         self.main_window = parent
+#         self.processed_sets = processed_sets
+
+#         self.setWindowTitle("重复文件分析与清理工具")
+#         self.setStyleSheet(parent.styleSheet())
+#         self.setWindowState(Qt.WindowState.WindowMaximized)
+        
+#         main_layout = QVBoxLayout(self)
+#         self._setup_controls(main_layout)
+
+#         self.tree = QTreeWidget()
+#         self.tree.setColumnCount(5)
+#         self.tree.setHeaderLabels([
+#             "操作", "文件路径", "可节省空间", "总空间占用", "文件数量"
+#         ])
+#         self.tree.setAlternatingRowColors(True)
+#         self.tree.setSortingEnabled(True)
+
+#         header = self.tree.header()
+#         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+#         header.resizeSection(0, 100) # Action
+#         header.resizeSection(1, 700) # Path
+#         header.resizeSection(2, 150) # Savings
+#         header.resizeSection(3, 150) # Total Space
+#         header.resizeSection(4, 120) # Count
+        
+#         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+#         self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
+        
+#         main_layout.addWidget(self.tree)
+        
+#         button_box = QHBoxLayout()
+#         button_box.addStretch()
+#         self.confirm_button = QPushButton()
+#         self.confirm_button.setDefault(True)
+#         cancel_button = QPushButton("取消")
+        
+#         button_box.addWidget(cancel_button)
+#         button_box.addWidget(self.confirm_button)
+#         main_layout.addLayout(button_box)
+
+#         # --- This is the core fix: Populate first, then connect signals ---
+#         self.populate_tree_and_set_defaults()
+#         self.connect_widget_signals()
+        
+#         self.tree.expandAll()
+#         self._sort_tree()
+#         self._update_savings_label()
+
+#         self.confirm_button.clicked.connect(self.accept)
+#         cancel_button.clicked.connect(self.reject)
+
+#     def populate_tree_and_set_defaults(self):
+#         """
+#         Phase 1 of setup: Creates all tree items and widgets, and crucially,
+#         sets their correct default "Keep" or "Trash" state without connecting signals.
+#         """
+#         for group_data in self.processed_sets:
+#             group_header = QTreeWidgetItem(self.tree)
+#             group_header.setData(0, Qt.ItemDataRole.UserRole, group_data["file_size_bytes"])
+#             group_header.setData(2, Qt.ItemDataRole.UserRole, group_data["potential_savings_bytes"])
+#             group_header.setData(3, Qt.ItemDataRole.UserRole, group_data["total_space_bytes"])
+#             group_header.setData(4, Qt.ItemDataRole.UserRole, group_data["count"])
+#             group_header.setText(1, f"包含 {group_data['count']} 个文件的重复组 (单个大小: {format_size(group_data['file_size_bytes'])})")
+#             group_header.setText(2, format_size(group_data["potential_savings_bytes"]))
+#             group_header.setText(3, format_size(group_data["total_space_bytes"]))
+#             group_header.setText(4, str(group_data["count"]))
+#             group_header.setFont(1, QFont("Segoe UI", 9, QFont.Weight.Bold))
+
+#             best_file_path = group_data["files"][0]["path"]
+
+#             for file_data in group_data["files"]:
+#                 child_item = QTreeWidgetItem(group_header, ["", file_data["path"]])
+#                 child_item.setData(0, Qt.ItemDataRole.UserRole, file_data)
+
+#                 action_widget = ActionWidget()
+#                 is_best = (file_data["path"] == best_file_path)
+                
+#                 # Directly set the button's checked state. This is the default.
+#                 action_widget.keep_button.setChecked(is_best)
+                
+#                 if is_best:
+#                     for col in range(self.tree.columnCount()):
+#                         child_item.setBackground(col, QColor("#1e4226"))
+
+#                 self.tree.setItemWidget(child_item, 0, action_widget)
+
+#     def connect_widget_signals(self):
+#         """
+#         Phase 2 of setup: After the entire tree is built, iterate through it
+#         again to connect the signals for user interaction.
+#         """
+#         root = self.tree.invisibleRootItem()
+#         for i in range(root.childCount()):
+#             group_header = root.child(i)
+#             for j in range(group_header.childCount()):
+#                 child_item = group_header.child(j)
+#                 action_widget = self.tree.itemWidget(child_item, 0)
+#                 if action_widget:
+#                     action_widget.keep_requested.connect(
+#                         lambda checked, item=child_item: self._on_keep_requested(item)
+#                     )
+
+#     def _on_keep_requested(self, selected_item):
+#         """Handles user interaction to enforce the 'only one keep per group' rule."""
+#         parent_group = selected_item.parent()
+#         if not parent_group: return
+
+#         for i in range(parent_group.childCount()):
+#             item = parent_group.child(i)
+#             widget = self.tree.itemWidget(item, 0)
+#             if widget:
+#                 is_the_selected_one = (item == selected_item)
+#                 widget.keep_button.setChecked(is_the_selected_one)
+#                 bg_color = QColor("#1e4226") if is_the_selected_one else QColor("transparent")
+#                 for col in range(self.tree.columnCount()):
+#                     item.setBackground(col, bg_color)
+        
+#         self._update_savings_label()
+
+#     def get_files_to_trash(self):
+#         """Gets the final list of files to trash based on button state."""
+#         files_to_trash = []
+#         root = self.tree.invisibleRootItem()
+#         for i in range(root.childCount()):
+#             group_header = root.child(i)
+#             for j in range(group_header.childCount()):
+#                 child = group_header.child(j)
+#                 action_widget = self.tree.itemWidget(child, 0)
+#                 if action_widget and not action_widget.keep_button.isChecked():
+#                     file_data = child.data(0, Qt.ItemDataRole.UserRole)
+#                     if file_data and "path" in file_data:
+#                         files_to_trash.append(file_data["path"])
+#         return files_to_trash
+
+#     # --- The following methods remain unchanged from the last version ---
+#     # They are included here to provide the complete, correct class definition.
+        
+#     def show_tree_context_menu(self, pos):
+#         item = self.tree.itemAt(pos)
+#         if not item or not item.parent(): return
+#         file_data = item.data(0, Qt.ItemDataRole.UserRole)
+#         if not file_data: return
+#         path = file_data["path"]
+#         menu = QMenu()
+#         style = self.style()
+#         open_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "打开文件")
+#         show_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+#         copy_path_action = menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "复制文件路径")
+#         action = menu.exec(self.tree.mapToGlobal(pos))
+#         if action == open_action: self.main_window.open_item(path)
+#         elif action == show_action: self.main_window.show_in_explorer(path)
+#         elif action == copy_path_action:
+#             QApplication.clipboard().setText(os.path.normpath(path))
+#             self.main_window.log_and_show(f"路径已复制: {os.path.normpath(path)}", "info", 2000)
+
+#     def _setup_controls(self, layout):
+#         controls_frame = QFrame()
+#         controls_layout = QHBoxLayout(controls_frame)
+#         controls_layout.setContentsMargins(0, 5, 0, 5)
+#         controls_layout.addWidget(QLabel("排序方式:"))
+#         self.sort_combo = QComboBox()
+#         self.sort_combo.addItems(["按可节省空间", "按总空间占用", "按文件数量"])
+#         self.sort_combo.currentIndexChanged.connect(self._sort_tree)
+#         controls_layout.addWidget(self.sort_combo)
+#         controls_layout.addSpacing(20)
+#         top_10_button = QPushButton("一键选择空间占用Top 10")
+#         top_10_button.clicked.connect(self._select_top_10)
+#         controls_layout.addWidget(top_10_button)
+#         controls_layout.addStretch()
+#         self.savings_label = QLabel()
+#         self.savings_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+#         controls_layout.addWidget(self.savings_label)
+#         layout.addWidget(controls_frame)
+
+#     def _sort_tree(self):
+#         column_map = {0: 2, 1: 3, 2: 4}
+#         column_to_sort = column_map.get(self.sort_combo.currentIndex(), 2)
+#         self.tree.sortByColumn(column_to_sort, Qt.SortOrder.DescendingOrder)
+
+#     def _select_top_10(self):
+#         self.tree.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+#         root = self.tree.invisibleRootItem()
+#         for i in range(root.childCount()):
+#             group_header = root.child(i)
+#             best_child = group_header.child(0)
+#             if i < 10:
+#                 self._on_keep_requested(best_child)
+#             else:
+#                 # For groups outside the top 10, ensure the best file is kept
+#                 # and don't change anything else unless the user does.
+#                 widget = self.tree.itemWidget(best_child, 0)
+#                 if widget and not widget.keep_button.isChecked():
+#                      self._on_keep_requested(best_child)
+#         self._update_savings_label()
+    
+#     def _update_savings_label(self):
+#         total_files_to_trash = 0
+#         total_savings_bytes = 0
+#         root = self.tree.invisibleRootItem()
+#         for i in range(root.childCount()):
+#             group_header = root.child(i)
+#             file_size = group_header.data(0, Qt.ItemDataRole.UserRole) or 0
+#             for j in range(group_header.childCount()):
+#                 child = group_header.child(j)
+#                 action_widget = self.tree.itemWidget(child, 0)
+#                 if action_widget and not action_widget.keep_button.isChecked():
+#                     total_files_to_trash += 1
+#                     total_savings_bytes += file_size
+#         self.savings_label.setText(
+#             f"当前选中清理: <span style='color: #e06c75;'>{total_files_to_trash}</span> 个文件, "
+#             f"预计可节省: <span style='color: #98c379;'>{format_size(int(total_savings_bytes))}</span>"
+#         )
+#         self.confirm_button.setText(f"确认清理 ({total_files_to_trash})")
+                
+class PreOperationDialog(QDialog):
+    """
+    Informs the user that a destination is not empty and asks them to choose
+    between a safe 'scan' or a fast 'skip' (move all) operation.
+    """
+    def __init__(self, dest_folder_name, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Action Required")
+        self.setStyleSheet(parent.styleSheet())
+        self.setModal(True) # Ensures user must interact with it
+        self.result = "cancel" # Default result if the dialog is closed
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title_label = QLabel("Destination Not Empty")
+        title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        info_text = (f"<p>The destination folder '<b>{dest_folder_name}</b>' already contains files.</p>"
+                     f"<p>To avoid creating duplicates and to proceed safely, please choose an option below.</p>")
+        info_label = QLabel(info_text)
+        info_label.setWordWrap(True)
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(title_label)
+        layout.addWidget(info_label)
+        layout.addSpacing(10)
+
+        # Create the buttons for the choices using the helper method
+        button_layout = QHBoxLayout()
+        self.scan_button = self._create_option_button(
+            "Smart Scan (Recommended)",
+            "Scans file content to prevent adding identical files. Slower but safer.",
+            "scan",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        )
+        self.skip_button = self._create_option_button(
+            "Move All (Fast)",
+            "Moves all files, automatically renaming any with the same name. Much faster, but may create duplicates.",
+            "skip",
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight)
+        )
+
+        button_layout.addWidget(self.scan_button)
+        button_layout.addWidget(self.skip_button)
+        layout.addLayout(button_layout)
+
+    def _create_option_button(self, title, description, result_val, icon):
+        """Helper function to create a styled choice button."""
+        button = QPushButton(f" {title}")
+        button.setIcon(icon)
+        button.setToolTip(description)
+        button.setMinimumHeight(40) # Make buttons larger
+        button.clicked.connect(lambda: self.set_result_and_accept(result_val))
+        return button
+
+    def set_result_and_accept(self, result_val):
+        """Sets the chosen result and closes the dialog."""
+        self.result = result_val
+        self.accept()
+
+class MoveConfirmationDialog(QDialog):
+    """A dialog to confirm moving a list of files/folders to a new destination."""
+    def __init__(self, source_paths, target_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Confirm Move")
+        self.setMinimumSize(700, 500)
+        self.setStyleSheet(parent.styleSheet())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        # --- Header ---
+        header_label = QLabel(f"Are you sure you want to move {len(source_paths)} item(s)?")
+        header_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        layout.addWidget(header_label)
+
+        # --- Source Panel ---
+        source_group = QFrame(); source_group.setLayout(QVBoxLayout())
+        source_label = QLabel("From:")
+        source_group.layout().addWidget(source_label)
+        
+        source_list = QListWidget()
+        source_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        icon_provider = QFileIconProvider()
+        for path in source_paths:
+            item = QListWidgetItem(icon_provider.icon(QFileInfo(path)), os.path.basename(path))
+            item.setToolTip(path) # Show full path on hover
+            source_list.addItem(item)
+        source_group.layout().addWidget(source_list)
+        layout.addWidget(source_group)
+        
+        # --- Arrow Separator ---
+        arrow_label = QLabel("▼")
+        arrow_label.setFont(QFont("Segoe UI", 20))
+        arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(arrow_label)
+
+        # --- Target Panel ---
+        target_group = QFrame(); target_group.setLayout(QHBoxLayout())
+        target_group.layout().setContentsMargins(10, 10, 10, 10)
+        target_label = QLabel("To:")
+        
+        target_path_label = QLineEdit(target_path)
+        target_path_label.setReadOnly(True)
+        target_path_label.setStyleSheet("border: 1px solid #3e4451; background-color: #21252b;")
+
+        target_group.layout().addWidget(target_label)
+        target_group.layout().addWidget(target_path_label)
+        layout.addWidget(target_group)
+
+        # --- Confirmation Buttons ---
+        button_box = QHBoxLayout()
+        confirm_button = QPushButton("Confirm Move")
+        confirm_button.setDefault(True)
+        confirm_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_box.addStretch()
+        button_box.addWidget(cancel_button)
+        button_box.addWidget(confirm_button)
+        layout.addLayout(button_box)
+        
+    def _create_option_button(self, title, description, result_val, icon):
+        """Helper function to create a styled choice button."""
+        button = QPushButton(f" {title}")
+        button.setIcon(icon)
+        button.setToolTip(description)
+        button.setMinimumHeight(40) # Make buttons larger
+        button.clicked.connect(lambda: self.set_result_and_accept(result_val))
+        return button
+
+    def set_result_and_accept(self, result_val):
+        """Sets the chosen result and closes the dialog."""
+        self.result = result_val
+        self.accept()
+class IconPickerDialog(QDialog):
+    """A dialog that displays a grid of selectable QStyle standard icons."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose a Built-in Icon")
+        self.setMinimumSize(600, 400)
+        self.selected_icon_name = None
+
+        layout = QVBoxLayout(self)
+        
+        self.icon_list_widget = QListWidget()
+        self.icon_list_widget.setViewMode(QListWidget.ViewMode.IconMode) # Grid view
+        self.icon_list_widget.setIconSize(QSize(48, 48))
+        self.icon_list_widget.setGridSize(QSize(80, 80))
+        self.icon_list_widget.setSpacing(10)
+        self.icon_list_widget.setMovement(QListWidget.Movement.Static)
+        self.icon_list_widget.itemDoubleClicked.connect(self.accept)
+        
+        layout.addWidget(self.icon_list_widget)
+
+        # --- Populate with a curated list of good icons ---
+        self.populate_icons()
+
+        # --- OK and Cancel buttons ---
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+    
+    #--- REPLACE the populate_icons method in the IconPickerDialog class ---
+
+    def populate_icons(self):
+        """
+        Populates the list with ALL available standard icons from QStyle,
+        filtering out any that are null or cannot be rendered.
+        """
+        style = self.style()
+        self.icon_list_widget.clear() # Clear any previous items
+
+        # Iterate through every member of the QStyle.StandardPixmap enum
+        for enum_member in QStyle.StandardPixmap:
+            # Important Check: Some enums might not have a valid icon in the current
+            # OS style. We check if the icon is null to avoid showing blank squares.
+            icon = style.standardIcon(enum_member)
+            if not icon.isNull():
+                icon_name = enum_member.name  # e.g., "SP_DirIcon"
+                
+                # Create the list item with the icon and its identifier name
+                item = QListWidgetItem(icon, icon_name)
+                item.setData(Qt.ItemDataRole.UserRole, icon_name) # Store the name for retrieval
+                item.setToolTip(icon_name) # Show the name on hover
+                self.icon_list_widget.addItem(item)
+
+
+            
+    def accept(self):
+        """Overrides accept to store the selected icon's name."""
+        selected_items = self.icon_list_widget.selectedItems()
+        if selected_items:
+            self.selected_icon_name = selected_items[0].data(Qt.ItemDataRole.UserRole)
+        super().accept()
+        
+class FolderDropDialog(QDialog):
+    """Asks the user how to handle dropped folders."""
+    def __init__(self, folder_count, file_count, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Folder Drop Options")
+        self.setStyleSheet(parent.styleSheet())
+        self.setMinimumWidth(850)  # <-- Set a wider minimum width
+        self.result = "cancel"
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        title_label = QLabel("Folders Detected")
+        title_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        info_text = (f"<p>You have dropped <b>{folder_count} folder(s)</b> and <b>{file_count} file(s)</b>.</p>"
+                     f"<p>Please choose how to handle the folders.</p>")
+        info_label = QLabel(info_text)
+        info_label.setWordWrap(True)
+
+        layout.addWidget(title_label)
+        layout.addWidget(info_label)
+
+        # --- MODIFIED BUTTON LAYOUT ---
+        # All buttons are now in a single QHBoxLayout
+        button_layout = QHBoxLayout()
+        
+        # Action buttons
+        self.as_is_button = self._create_option_button(
+            "Move Folders As-Is (Recommended)",
+            "Moves the entire folder(s) into the destination, preserving their structure.",
+            "move_as_is",
+            QStyle.StandardPixmap.SP_DirLinkIcon
+        )
+        self.merge_button = self._create_option_button(
+            "Merge Folder Contents",
+            "Moves only the files *inside* the dropped folder(s), discarding the folder structure.",
+            "merge",
+            QStyle.StandardPixmap.SP_FileDialogDetailedView
+        )
+        
+        button_layout.addWidget(self.as_is_button)
+        button_layout.addWidget(self.merge_button)
+        
+        # Spacer to push the cancel button to the right
+        # button_layout.addStretch() 
+        
+        # Cancel button
+        cancel_button = QPushButton("Cancel Operation")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+
+        layout.addLayout(button_layout)
+        # --- END OF MODIFICATION ---
+
+    def _create_option_button(self, title, description, result_val, icon):
+        button = QPushButton(f" {title}")
+        button.setIcon(self.style().standardIcon(icon))
+        button.setToolTip(description)
+        button.clicked.connect(lambda: self.set_result_and_accept(result_val))
+        return button
+
+    def set_result_and_accept(self, result_val):
+        self.result = result_val
+        self.accept()
+        
+
+
+class AboutDialog(QDialog):
+    """A dialog to display the application's version and release notes."""
+    def __init__(self, version, notes_markdown, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About")
+        self.setMinimumSize(700, 550)
+        self.setStyleSheet(parent.styleSheet())
+
+        layout = QVBoxLayout(self)
+        
+        title_label = QLabel(f"Latest version")
+        title_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        version_label = QLabel(f"Version {version}")
+        version_label.setFont(QFont("Segoe UI", 12))
+        version_label.setStyleSheet("color: #98c379;") # Use a highlight color
+        layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addSpacing(15)
+
+        notes_browser = QTextBrowser()
+        # QTextBrowser can render Markdown directly
+        notes_browser.setMarkdown(notes_markdown)
+        notes_browser.setOpenExternalLinks(True) # For any future links
+        layout.addWidget(notes_browser)
+        
+        layout.addSpacing(10)
+
+        # close_button = QPushButton("Close")
+        # close_button.clicked.connect(self.accept)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        # button_layout.addWidget(close_button)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
 
 class HashingSelectionDialog(QDialog):
     """Dialog for users to select files/folders for deduplication, with robust checkbox logic."""
@@ -313,178 +1072,106 @@ class HashingSelectionDialog(QDialog):
             elif os.path.isdir(path) and self.model.hasChildren(index):
                  for i in range(self.model.rowCount(index)):
                     self._get_checked_recursive(self.model.index(i, 0, index), checked_list)
-                    
-                    
-                    
-                    
-class HashManager:
-    """Manages a persistent SQLite cache for file hashes to avoid re-computation."""
-    def __init__(self, db_path):
-        self.db_path = db_path
-        self.connection = None
-        self.cursor = None
-    def __enter__(self):
-        try:
-            self.connection = sqlite3.connect(self.db_path)
-            self.cursor = self.connection.cursor()
-            self._setup_database()
-        except sqlite3.Error as e:
-            print(f"FATAL: Could not connect to hash database: {e}")
-            raise
-        return self
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.connection:
-            self.connection.commit()
-            self.connection.close()
-    def _setup_database(self):
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS hash_cache (file_path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL, file_hash TEXT NOT NULL, last_checked REAL NOT NULL)")
-        self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON hash_cache (file_path)")
-    def get_cached_hash(self, file_path, mtime, size):
-        self.cursor.execute("SELECT mtime, size, file_hash FROM hash_cache WHERE file_path = ?", (file_path,))
-        result = self.cursor.fetchone()
-        if result:
-            cached_mtime, cached_size, cached_hash = result
-            if cached_mtime == mtime and cached_size == size:
-                return cached_hash
-        return None
-    def update_cache(self, file_path, mtime, size, file_hash):
-        now = datetime.now().timestamp()
-        self.cursor.execute("INSERT OR REPLACE INTO hash_cache VALUES (?, ?, ?, ?, ?)", (file_path, mtime, size, file_hash, now))
-    def prune_cache(self, valid_paths_set):
-        self.cursor.execute("SELECT file_path FROM hash_cache")
-        cached_paths = {row[0] for row in self.cursor.fetchall()}
-        paths_to_delete = list(cached_paths - valid_paths_set)
-        if paths_to_delete:
-            self.cursor.executemany("DELETE FROM hash_cache WHERE file_path = ?", [(p,) for p in paths_to_delete])
-            self.connection.commit()
-        return len(paths_to_delete)
 
-# --- CUSTOM WIDGET CLASSES ---
-class ActionWidget(QWidget):
-    """A stateless widget container for a Keep button."""
-    keep_requested = pyqtSignal()
-    def __init__(self, parent=None):
+# --- REPLACE your entire DeduplicationDialog class with this one ---
+
+class DeduplicationDialog(QDialog):
+    """A new, safer dialog to let the user decide how to handle duplicates."""
+    def __init__(self, duplicates, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 0, 5, 0)
-        layout.setSpacing(5)
-        style = self.style()
-        self.keep_button = QPushButton(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton), "")
-        self.keep_button.setToolTip("保留这个文件，并清理此组中的其他文件。")
-        self.keep_button.setCheckable(True)
-        self.keep_button.setChecked(False)
-        self.keep_button.toggled.connect(lambda checked: self.keep_requested.emit() if checked else None)
-        layout.addWidget(self.keep_button)
-
-class DropFrame(QFrame):
-    def __init__(self, category_name, icon, main_window):
-        # The parent widget (main_window) is passed to super().__init__
-        super().__init__(main_window)
-        self.category_name = category_name
-        self.main_window = main_window
-        self.setAcceptDrops(True)
-        self.setProperty("category", category_name)
+        self.setWindowTitle("Duplicate Files Found")
+        self.setMinimumSize(1200, 600)
+        self.setStyleSheet(parent.styleSheet())
+        self.duplicates = duplicates
+        
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(QSize(48, 48)))
-        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        title_label = QLabel(category_name)
-        title_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
-    
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            self.main_window.set_drop_frame_style(True)
-            
-    def dropEvent(self, event):
-        source_paths = [url.toLocalFile() for url in event.mimeData().urls()]
-        if source_paths:
-            self.main_window.process_dropped_items(source_paths, self.category_name)
-        self.main_window.reset_drop_frame_styles()
-        event.acceptProposedAction()
-
-# class DropTreeView(QTreeView):
-#     """Base TreeView with context menu and drop handling for external files."""
-#     # ... (This class is complete and correct from previous versions)
-
-# class ThemedTreeView(DropTreeView):
-#     """A TreeView that can paint large, faint text in its background."""
-#     # ... (This class is complete and correct from previous versions)
-
-
-
-# --- ADD THESE TWO MISSING CLASSES TO YOUR SCRIPT ---
-
-class DropTreeView(QTreeView):
-    def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window
-        self.setAcceptDrops(True)
-        self.setDragDropMode(self.DragDropMode.DropOnly)
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.main_window.show_context_menu)
-        self.doubleClicked.connect(self.main_window.open_selected_item)
-    
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-    
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-    
-    def dropEvent(self, event):
-        index = self.indexAt(event.position().toPoint())
-        if not index.isValid(): return
+        layout.addWidget(QLabel("<b>Warning:</b> The following source files have the exact same content as files already in the destination."))
+        layout.addWidget(QLabel("For each duplicate, please choose an action. The default is to safely move the source file to the Recycle Bin."))
         
-        target_dir_path = self.model().filePath(index) if self.model().isDir(index) else os.path.dirname(self.model().filePath(index))
-        category_name = self.main_window.get_category_from_path(target_dir_path)
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Action", "Source File (Duplicate)", "Conflicts With Destination File", "File Size"])
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_table_context_menu)
         
-        if category_name:
-            files = [url.toLocalFile() for url in event.mimeData().urls()]
-            # This logic correctly passes the drop to the main window's processing function
-            self.main_window.process_dropped_items(files, category_name, specific_target_dir=target_dir_path)
+        self.populate_table()
+        self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
         
-        event.acceptProposedAction()
+        button_layout = QHBoxLayout()
+        apply_to_all_btn = QPushButton("Apply Action to All...")
+        apply_to_all_btn.clicked.connect(self.apply_action_to_all)
+        button_layout.addWidget(apply_to_all_btn)
+        button_layout.addStretch()
+        
+        ok_button = QPushButton("Confirm & Process Files"); cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(cancel_button); button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+        
+        ok_button.clicked.connect(self.accept); cancel_button.clicked.connect(self.reject)
 
-class ThemedTreeView(DropTreeView):
-    """A QTreeView that can paint large, faint text in its background."""
-    def __init__(self, main_window):
-        super().__init__(main_window)
-        self.background_text = ""
+    def apply_action_to_all(self):
+        """Lets the user set the same action for all items in the list."""
+        actions = ["Move to Recycle Bin", "Move to '_duplicates' folder", "Skip (Move and Rename)"]
+        action, ok = QInputDialog.getItem(self, "Apply to All", "Choose an action to apply to all duplicate items:", actions, 0, False)
+        if ok and action:
+            index = actions.index(action)
+            for row in range(self.table.rowCount()):
+                if combo_box := self.table.cellWidget(row, 0):
+                    combo_box.setCurrentIndex(index)
 
-    def setBackgroundText(self, text):
-        """Sets the text to be drawn in the background and triggers a repaint."""
-        if self.background_text != text:
-            self.background_text = text
-            self.viewport().update()  # Repaint only if text changes
+    def populate_table(self):
+        self.table.setRowCount(len(self.duplicates))
+        actions = ["Move to Recycle Bin", "Move to '_duplicates' folder", "Skip (Move and Rename)"]
+        
+        for row, (old_path, _, _) in enumerate(self.duplicates):
+            combo_box = QComboBox()
+            combo_box.addItems(actions)
+            # Set a tooltip for the combo box itself
+            combo_box.setToolTip(
+                "Recycle Bin: Safest, reversible.\n"
+                "_duplicates folder: Quarantine for review.\n"
+                "Skip: Moves the file anyway, creating a copy."
+            )
+            self.table.setCellWidget(row, 0, combo_box)
+            # ... (The rest of the table populating logic is the same as your last version)
+            try: old_stat = os.stat(old_path)
+            except FileNotFoundError: continue
+            self.table.setItem(row, 1, QTableWidgetItem(self.duplicates[row][0]))
+            self.table.setItem(row, 2, QTableWidgetItem(self.duplicates[row][1]))
+            formatted_size = format_size(old_stat.st_size)
+            size_item = QTableWidgetItem(formatted_size); size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 3, size_item)
 
-    def paintEvent(self, event):
-        """Overrides the paint event to draw the background text before drawing the tree."""
-        # First, call the original paint event so the default background is drawn
-        super().paintEvent(event)
+    def get_user_choices(self):
+        """Gets the user's chosen action from the combo box for each file."""
+        choices = {}
+        for row in range(self.table.rowCount()):
+            source_path = self.table.item(row, 1).text()
+            combo_box = self.table.cellWidget(row, 0)
+            choices[source_path] = combo_box.currentText()
+        return choices
 
-        if self.background_text:
-            painter = QPainter(self.viewport())
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-            # Configure a very large, bold font
-            font = QFont("Segoe UI", 120, QFont.Weight.ExtraBold)
-            painter.setFont(font)
-
-            # Set a very faint color for the text (light grey with low opacity)
-            painter.setPen(QColor(200, 200, 200, 15))
-
-            # Draw the text centered in the view
-            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.background_text)
-            
-            painter.end()
-# --- DIALOGS ---
-
+    # The show_table_context_menu method is unchanged from your last version.
+    def show_table_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if not item or item.column() not in [1, 2]: return
+        path = item.text()
+        menu = QMenu(); action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon), "Show in File Explorer")
+        if menu.exec(self.table.mapToGlobal(pos)) == action:
+            try:
+                if sys.platform == "win32": subprocess.run(['explorer', '/select,', os.path.normpath(path)])
+                else: subprocess.run(['open', '-R', os.path.normpath(path)])
+            except Exception as e: self.parent().logger.error(f"Failed to show in explorer: {path}", exc_info=True)
 
 class LogViewerDialog(QDialog):
+
+    # --- In the LogViewerDialog class, REPLACE the __init__ method ---
+
     def __init__(self, logger, parent=None):
         super().__init__(parent)
         self.logger = logger
@@ -503,19 +1190,36 @@ class LogViewerDialog(QDialog):
         self.log_display = QTextBrowser()
         self.log_display.setFont(QFont("Consolas", 10))
         
-        # Set the background color to match the dark theme
+        # --- THIS IS THE FIX ---
+        # Get the widget's color palette
         palette = self.log_display.palette()
+        # Set the 'Base' color role (the background for text-entry areas)
+        # to our application's dark background color.
         palette.setColor(QPalette.ColorRole.Base, QColor("#21252b"))
+        # Apply the new palette to the widget
         self.log_display.setPalette(palette)
-        
+        # --- END OF FIX ---
+
         layout.addWidget(self.log_display)
         
         self.date_combo.currentIndexChanged.connect(self.load_log_for_date)
         self.populate_dates()
-
-    def populate_dates(self):
-        self.date_combo.clear()
-        self.date_combo.addItems(self.logger.get_log_dates())
+    def populate_dates(self): self.date_combo.clear(); self.date_combo.addItems(self.logger.get_log_dates())
+    
+    # def load_log_for_date(self):
+    #     date_str = self.date_combo.currentText()
+    #     if not date_str: return
+    #     logs = self.logger.get_logs_for_date(date_str); html = ""
+    #     for line in logs.split('\n'):
+    #         line = line.replace("<", "&lt;").replace(">", "&gt;"); color = "#abb2bf"
+    #         if "[ERROR" in line: color = "#e06c75"
+    #         elif "[WARNING" in line: color = "#d19a66"
+    #         elif "[INFO" in line: color = "#98c379"
+    #         html += f'<pre style="margin: 0; padding: 0; white-space: pre-wrap; color: {color};">{line}</pre>'
+    #     self.log_display.setHtml(html)
+    
+    
+    # --- In the LogViewerDialog class, REPLACE the load_log_for_date method ---
 
     def load_log_for_date(self):
         date_str = self.date_combo.currentText()
@@ -525,6 +1229,7 @@ class LogViewerDialog(QDialog):
 
         logs = self.logger.get_logs_for_date(date_str)
         
+        # This color palette no longer needs the background color
         color_timestamp = "#6c7380"
         color_default = "#abb2bf"
         color_info = "#63a37b"
@@ -540,6 +1245,7 @@ class LogViewerDialog(QDialog):
             elif "[WARNING" in line: main_color = color_warn
             elif "[INFO" in line: main_color = color_info
 
+            # The <pre> style is now simpler
             pre_style = 'style="margin: 0; padding: 2px 5px; white-space: pre-wrap;"'
 
             if len(line) > 23 and line[19] == ' ' and '[' in line[20:29]:
@@ -556,43 +1262,311 @@ class LogViewerDialog(QDialog):
                 html_lines.append(f'<pre {pre_style}><span style="color: {main_color};">{line}</span></pre>')
 
         self.log_display.setHtml("".join(html_lines))
+        
 
-class AboutDialog(QDialog):
-    """A dialog to display the application's version and release notes."""
-    def __init__(self, version, notes_markdown, parent=None):
+
+#--- REPLACE the entire SettingsDialog class with this one ---
+
+#--- REPLACE the entire SettingsDialog class with this one ---
+
+class SettingsDialog(QDialog):
+    def __init__(self, current_icons, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("About")
-        self.setMinimumSize(700, 550)
+        self.main_window = parent # Store reference to the main window
+        self.setWindowTitle("Settings & Rules")
+        self.setMinimumSize(800, 750)
         self.setStyleSheet(parent.styleSheet())
-
-        layout = QVBoxLayout(self)
         
-        title_label = QLabel(f"Latest version")
-        title_label.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        layout.addWidget(title_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        # --- FIX: Initialize instance attributes at the very top ---
+        self.current_icons = current_icons
+        self.custom_icon_paths = {}
+        self.icon_previews = {}
+        # --- END OF FIX ---
 
-        version_label = QLabel(f"Version {version}")
-        version_label.setFont(QFont("Segoe UI", 12))
-        version_label.setStyleSheet("color: #98c379;") # Use a highlight color
-        layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        main_layout = QVBoxLayout(self)
+
+        # --- Mode Selection ---
+        mode_group = QFrame(self)
+        mode_group.setLayout(QVBoxLayout())
+        mode_label = QLabel("Operating Mode")
+        mode_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        mode_group.layout().addWidget(mode_label)
+
+        self.para_mode_radio = QRadioButton("PARA Method (Recommended)")
+        self.custom_mode_radio = QRadioButton("Custom Folder Analysis (GPU Required)")
         
-        layout.addSpacing(15)
+        self.mode_button_group = QButtonGroup(self)
+        self.mode_button_group.addButton(self.para_mode_radio)
+        self.mode_button_group.addButton(self.custom_mode_radio)
+        self.para_mode_radio.setChecked(True)
 
-        notes_browser = QTextBrowser()
-        # QTextBrowser can render Markdown directly
-        notes_browser.setMarkdown(notes_markdown)
-        notes_browser.setOpenExternalLinks(True) # For any future links
-        layout.addWidget(notes_browser)
+        mode_group.layout().addWidget(self.para_mode_radio)
+        mode_group.layout().addWidget(self.custom_mode_radio)
+        main_layout.addWidget(mode_group)
         
-        layout.addSpacing(10)
+        # --- Folder Path Stack ---
+        self.path_stack = QStackedWidget()
+        self.para_path_widget = self._create_path_widget("PARA Base Directory", self.browse_directory)
+        self.custom_path_widget = self._create_path_widget("Custom Folder to Analyze", self.browse_directory)
+        self.path_stack.addWidget(self.para_path_widget)
+        self.path_stack.addWidget(self.custom_path_widget)
+        main_layout.addWidget(self.path_stack)
+        
+        # Connect radio buttons to change the visible path input
+        self.para_mode_radio.toggled.connect(lambda checked: self.path_stack.setCurrentIndex(0) if checked else None)
+        self.custom_mode_radio.toggled.connect(lambda checked: self.path_stack.setCurrentIndex(1) if checked else None)
 
-        # close_button = QPushButton("Close")
-        # close_button.clicked.connect(self.accept)
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        # button_layout.addWidget(close_button)
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+        # GPU Lock: Disable custom mode if no GPU is available
+        if not self.main_window.gpu_available:
+            self.custom_mode_radio.setEnabled(False)
+            self.custom_mode_radio.setToolTip("A compatible NVIDIA GPU and 'numba' library are required for this mode.")
+            
+        # --- Custom Icons Group ---
+        icons_group = QFrame(self)
+        icons_group.setLayout(QVBoxLayout())
+        icons_label = QLabel("Custom Category Icons")
+        icons_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        icons_group.layout().addWidget(icons_label)
+        icons_grid = QGridLayout()
+        icons_grid.setColumnStretch(1, 1)
+        
+        para_categories = ["Projects", "Areas", "Resources", "Archives"]
+        for i, category in enumerate(para_categories):
+            self.icon_previews[category] = QLabel()
+            self.icon_previews[category].setFixedSize(32, 32)
+            self.icon_previews[category].setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            change_local_button = QPushButton("From File...")
+            change_local_button.clicked.connect(partial(self.browse_for_icon, category))
+            
+            change_builtin_button = QPushButton("Choose Built-in...")
+            change_builtin_button.clicked.connect(partial(self.choose_builtin_icon, category))
+
+            icons_grid.addWidget(QLabel(f"{category} Icon:"), i, 0)
+            icons_grid.addWidget(self.icon_previews[category], i, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            icons_grid.addWidget(change_builtin_button, i, 2)
+            icons_grid.addWidget(change_local_button, i, 3)
+            
+        icons_group.layout().addLayout(icons_grid)
+        main_layout.addWidget(icons_group)
+
+        # --- GPU Acceleration Group ---
+        gpu_group = QFrame(self)
+        gpu_group.setLayout(QVBoxLayout())
+        gpu_label = QLabel("Performance")
+        gpu_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        gpu_group.layout().addWidget(gpu_label)
+
+        self.gpu_checkbox = QCheckBox("Enable GPU Acceleration for Hashing (Experimental)", checked=True)
+        self.gpu_checkbox.setStyleSheet("color: #abb2bf;")  
+        self.gpu_checkbox.setToolTip("Requires a compatible NVIDIA GPU and the 'numba' library.\nAccelerates hashing for very large files (>100MB).")
+        
+        if not self.main_window.gpu_available:
+            self.gpu_checkbox.setEnabled(False)
+            self.gpu_checkbox.setText(f"{self.gpu_checkbox.text()} (No compatible GPU detected)")
+
+        gpu_group.layout().addWidget(self.gpu_checkbox)
+        main_layout.addWidget(gpu_group)
+
+        # --- Automation Rules & Dialog Buttons ---
+        rules_group = QFrame(self)
+        rules_group.setLayout(QVBoxLayout())
+        rules_label = QLabel("Custom Automation Rules")
+        rules_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        self.rules_table = QTableWidget()
+        self.setup_rules_table()
+        rules_buttons_layout = QHBoxLayout()
+        add_rule_button = QPushButton("Add Rule")
+        add_rule_button.clicked.connect(self.add_rule)
+        remove_rule_button = QPushButton("Remove Selected Rule")
+        remove_rule_button.clicked.connect(self.remove_rule)
+        rules_buttons_layout.addStretch()
+        rules_buttons_layout.addWidget(add_rule_button)
+        rules_buttons_layout.addWidget(remove_rule_button)
+        rules_group.layout().addWidget(rules_label)
+        rules_group.layout().addWidget(self.rules_table)
+        rules_group.layout().addLayout(rules_buttons_layout)
+        main_layout.addWidget(rules_group)
+
+        dialog_buttons_layout = QHBoxLayout()
+        dialog_buttons_layout.addStretch()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        save_button = QPushButton("Save & Close")
+        save_button.setDefault(True)
+        save_button.clicked.connect(self.save_and_accept)
+        dialog_buttons_layout.addWidget(cancel_button)
+        dialog_buttons_layout.addWidget(save_button)
+        main_layout.addLayout(dialog_buttons_layout)
+        
+        self.load_settings()
+
+    def _create_path_widget(self, label_text, browse_callback):
+        """Helper to create a consistent path selection widget."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0,0,0,0)
+        label = QLabel(label_text)
+        line_edit = QLineEdit()
+        browse_button = QPushButton("Browse...")
+        # FIX: Pass the specific line_edit to the callback
+        browse_button.clicked.connect(lambda: browse_callback(line_edit))
+        layout.addWidget(label)
+        layout.addWidget(line_edit)
+        layout.addWidget(browse_button)
+        # Store a reference to the line edit for easy access later
+        widget.setProperty("line_edit", line_edit)
+        return widget
+    
+    def choose_builtin_icon(self, category):
+        """Opens the IconPickerDialog to select a built-in icon."""
+        picker = IconPickerDialog(self)
+        if picker.exec() and picker.selected_icon_name:
+            self.custom_icon_paths[category] = picker.selected_icon_name
+            self._update_icon_previews()
+
+    def _update_icon_previews(self):
+        """Refreshes previews. Now handles paths, built-ins, and defaults."""
+        style = self.style()
+        for category, label in self.icon_previews.items():
+            value = self.custom_icon_paths.get(category)
+            pixmap = None
+            if value:
+                if value.startswith("SP_"): # It's a built-in icon identifier
+                    try:
+                        enum = getattr(QStyle.StandardPixmap, value)
+                        pixmap = style.standardIcon(enum).pixmap(32, 32)
+                    except AttributeError:
+                        pixmap = None # Invalid identifier
+                elif os.path.exists(value): # It's a file path
+                    pixmap = QPixmap(value)
+
+            if pixmap and not pixmap.isNull():
+                label.setPixmap(pixmap.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                # Fallback: Show the app's current default icon for that category
+                if category in self.current_icons:
+                    label.setPixmap(self.current_icons[category].pixmap(32, 32))
+    
+    def browse_for_icon(self, category):
+        file_path, _ = QFileDialog.getOpenFileName(self, f"Select Icon for {category}", "", "Image Files (*.png *.ico *.jpg *.jpeg)")
+        if file_path:
+            self.custom_icon_paths[category] = file_path
+            self._update_icon_previews()
+
+    
+    def setup_rules_table(self):
+        self.rules_table.setColumnCount(5)
+        self.rules_table.setHorizontalHeaderLabels(["Category", "Condition Type", "Condition Value", "Action", "Action Value"])
+        self.rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+
+
+
+
+    def load_settings(self):
+        try:
+            with open(resource_path("config.json"), "r") as f:
+                config = json.load(f)
+            
+            # Load path for PARA mode
+            para_path_widget = self.path_stack.widget(0)
+            para_line_edit = para_path_widget.property("line_edit")
+            para_line_edit.setText(config.get("base_directory", ""))
+            
+            self.custom_icon_paths = config.get("custom_icons", {})
+            self.gpu_checkbox.setChecked(config.get("gpu_hashing_enabled", False))
+
+        except (FileNotFoundError, json.JSONDecodeError):
+            # This is not an error on first run, just means no config exists yet.
+            self.custom_icon_paths = {}
+        
+        self._update_icon_previews() # Update UI after loading
+            
+        try:
+            with open(resource_path("rules.json"), "r") as f:
+                rules = json.load(f)
+                self.rules_table.setRowCount(len(rules))
+                for i, rule in enumerate(rules):
+                    self.add_rule_to_table(i, rule)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.rules_table.setRowCount(0)
+    def save_and_accept(self):
+        try:
+            with open(resource_path("config.json"), "r") as f_read:
+                config = json.load(f_read)
+        except (FileNotFoundError, json.JSONDecodeError):
+            config = {}
+        
+        # Save path based on which mode is selected
+        if self.para_mode_radio.isChecked():
+            para_path_widget = self.path_stack.widget(0)
+            line_edit = para_path_widget.property("line_edit")
+            config["base_directory"] = line_edit.text()
+        else: # Custom mode
+            custom_path_widget = self.path_stack.widget(1)
+            line_edit = custom_path_widget.property("line_edit")
+            # In a real app you might save this to a different key
+            config["custom_analysis_directory"] = line_edit.text()
+
+        config["custom_icons"] = self.custom_icon_paths
+        config["gpu_hashing_enabled"] = self.gpu_checkbox.isChecked()
+
+        with open(resource_path("config.json"), "w") as f:
+            json.dump(config, f, indent=4)
+            
+        rules_data = []
+        for i in range(self.rules_table.rowCount()):
+            cond_item = self.rules_table.item(i, 2)
+            act_item = self.rules_table.item(i, 4)
+            rules_data.append({
+                "category": self.rules_table.cellWidget(i, 0).currentText(),
+                "condition_type": self.rules_table.cellWidget(i, 1).currentText(),
+                "condition_value": cond_item.text() if cond_item else "",
+                "action": self.rules_table.cellWidget(i, 3).currentText(),
+                "action_value": act_item.text() if act_item else ""
+            })
+        with open(resource_path("rules.json"), "w") as f:
+            json.dump(rules_data, f, indent=4)
+            
+        self.accept()
+
+    def add_rule_to_table(self, row, rule_data=None):
+        categories = ["Projects", "Areas", "Resources", "Archives"]
+        condition_types = ["extension", "keyword"]
+        actions = ["subfolder", "prefix"]
+        cat_combo = QComboBox()
+        cat_combo.addItems(categories)
+        cond_combo = QComboBox()
+        cond_combo.addItems(condition_types)
+        act_combo = QComboBox()
+        act_combo.addItems(actions)
+        if rule_data:
+            cat_combo.setCurrentText(rule_data.get("category"))
+            cond_combo.setCurrentText(rule_data.get("condition_type"))
+            act_combo.setCurrentText(rule_data.get("action"))
+        self.rules_table.setCellWidget(row, 0, cat_combo)
+        self.rules_table.setCellWidget(row, 1, cond_combo)
+        self.rules_table.setCellWidget(row, 3, act_combo)
+        self.rules_table.setItem(row, 2, QTableWidgetItem(rule_data.get("condition_value", "") if rule_data else ""))
+        self.rules_table.setItem(row, 4, QTableWidgetItem(rule_data.get("action_value", "") if rule_data else ""))
+
+    def add_rule(self):
+        row_count = self.rules_table.rowCount()
+        self.rules_table.insertRow(row_count)
+        self.add_rule_to_table(row_count, None)
+
+    def remove_rule(self):
+        if (current_row := self.rules_table.currentRow()) >= 0:
+            self.rules_table.removeRow(current_row)
+
+    def browse_directory(self, target_line_edit):
+        """This now correctly accepts the QLineEdit it should update."""
+        if (directory := QFileDialog.getExistingDirectory(self, "Select Directory")):
+            target_line_edit.setText(directory)
+
+
+
 
 class FullScanResultDialog(QDialog):
     def __init__(self, processed_sets, parent=None):
@@ -613,11 +1587,11 @@ class FullScanResultDialog(QDialog):
 
         header = self.tree.header()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 100)
-        header.resizeSection(1, 700)
-        header.resizeSection(2, 150)
-        header.resizeSection(3, 150)
-        header.resizeSection(4, 120)
+        header.resizeSection(0, 100) # Action
+        header.resizeSection(1, 700) # Path
+        header.resizeSection(2, 150) # Savings
+        header.resizeSection(3, 150) # Total Space
+        header.resizeSection(4, 120) # Count
         
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_tree_context_menu)
@@ -653,17 +1627,27 @@ class FullScanResultDialog(QDialog):
             group_header.setText(3, format_size(group_data["total_space_bytes"]))
             group_header.setText(4, str(group_data["count"]))
             group_header.setFont(1, QFont("Segoe UI", 9, QFont.Weight.Bold))
+            
+            # The first file in the sorted list is the "best" one
             best_file_path = group_data["files"][0]["path"]
+            
             for file_data in group_data["files"]:
                 child_item = QTreeWidgetItem(group_header, ["", file_data["path"]])
                 child_item.setData(0, Qt.ItemDataRole.UserRole, file_data)
+                
+                # Set the informative tooltip
                 child_item.setToolTip(1, f"得分: {file_data['score']}\n理由: {file_data['reason']}\n修改日期: {datetime.fromtimestamp(file_data['mtime']).strftime('%Y-%m-%d %H:%M:%S')}")
+                
                 action_widget = ActionWidget()
                 is_best = (file_data["path"] == best_file_path)
+                
+                # Pre-check the button for the best file
                 action_widget.keep_button.setChecked(is_best)
+                
                 if is_best:
                     for col in range(self.tree.columnCount()):
-                        child_item.setBackground(col, QColor("#1e4226"))
+                        child_item.setBackground(col, QColor("#1e4226")) # Highlight the best file
+                        
                 self.tree.setItemWidget(child_item, 0, action_widget)
 
     def connect_widget_signals(self):
@@ -684,7 +1668,9 @@ class FullScanResultDialog(QDialog):
             widget = self.tree.itemWidget(item, 0)
             if widget:
                 is_the_selected_one = (item == selected_item)
+                widget.keep_button.blockSignals(True)
                 widget.keep_button.setChecked(is_the_selected_one)
+                widget.keep_button.blockSignals(False)
                 bg_color = QColor("#1e4226") if is_the_selected_one else QColor("transparent")
                 for col in range(self.tree.columnCount()):
                     item.setBackground(col, bg_color)
@@ -712,10 +1698,15 @@ class FullScanResultDialog(QDialog):
         path = file_data.get("path")
         if not path: return
         menu = QMenu()
+        open_action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOkButton), "打开文件")
         show_action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon), "打开文件所在位置")
+        copy_path_action = menu.addAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon), "复制文件路径")
         action = menu.exec(self.tree.mapToGlobal(pos))
-        if action == show_action:
-            self.main_window.show_in_explorer(path)
+        if action == open_action: self.main_window.open_item(path)
+        elif action == show_action: self.main_window.show_in_explorer(path)
+        elif action == copy_path_action:
+            QApplication.clipboard().setText(os.path.normpath(path))
+            self.main_window.log_and_show(f"路径已复制: {os.path.normpath(path)}", "info", 2000)
 
     def _setup_controls(self, layout):
         controls_frame = QFrame()
@@ -742,17 +1733,13 @@ class FullScanResultDialog(QDialog):
         self.tree.sortByColumn(column_to_sort, Qt.SortOrder.DescendingOrder)
 
     def _select_top_10(self):
-        self.tree.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        self.tree.sortByColumn(2, Qt.SortOrder.DescendingOrder) # Sort by savings
         root = self.tree.invisibleRootItem()
-        for i in range(root.childCount()):
+        for i in range(min(10, root.childCount())): # Process top 10 or fewer
             group_header = root.child(i)
-            best_child = group_header.child(0)
-            if i < 10:
+            if group_header.childCount() > 0:
+                best_child = group_header.child(0)
                 self._on_keep_requested(best_child)
-            else:
-                widget = self.tree.itemWidget(best_child, 0)
-                if widget and not widget.keep_button.isChecked():
-                    self._on_keep_requested(best_child)
         self._update_savings_label()
     
     def _update_savings_label(self):
@@ -773,6 +1760,14 @@ class FullScanResultDialog(QDialog):
             f"预计可节省: <span style='color: #98c379;'>{format_size(int(total_savings_bytes))}</span>"
         )
         self.confirm_button.setText(f"确认清理 ({total_files_to_trash})")
+
+
+
+
+
+
+
+
 
 class SettingsDialog(QDialog):
     def __init__(self, current_icons, parent=None):
@@ -904,6 +1899,71 @@ class ParaFileManager(QMainWindow):
 
 # --- In the ParaFileManager class, REPLACE the __init__ method ---
 
+    # def __init__(self, logger):
+    #     super().__init__()
+    #     self.logger = logger
+    #     self.setWindowTitle("PARA File Manager EVO")
+    #     self.setGeometry(100, 100, 1400, 900)
+        
+    #     # --- Core Properties ---
+    #     self.APP_VERSION = "1.4.0"
+    #     self.operating_mode = "para"
+    #     self.base_dir = None
+    #     self.para_folders = {"Projects": "1_Projects", "Areas": "2_Areas", "Resources": "3_Resources", "Archives": "4_Archives"}
+    #     self.para_root_paths = set()
+    #     self.folder_to_category = {v: k for k, v in self.para_folders.items()}
+    #     self.para_category_icons = {}
+    #     self.rules = []
+    #     self.scan_rules = {}
+    #     self.move_to_history = []
+        
+    #     # --- Persistent User Data Paths (Defined Early) ---
+    #     self.config_path = get_user_data_path("config.json")
+    #     self.rules_path = get_user_data_path("rules.json")
+    #     self.scan_rules_path = get_user_data_path("scan_rules.json")
+    #     self.hash_cache_db_path = get_user_data_path("hash_cache.db")
+    #     self.index_cache_path = get_user_data_path("file_index.cache")
+
+    #     # --- GPU & Caching Properties ---
+    #     self.gpu_hashing_enabled = False
+    #     self.gpu_available = False
+    #     self.gpu_status_message = "GPU not available or disabled."
+
+    #     # --- Search & Indexing ---
+    #     self.file_index = []
+    #     self.search_timer = QTimer(self)
+    #     self.search_timer.setSingleShot(True)
+    #     self.search_timer.timeout.connect(self.perform_search)
+    #     self.RESULTS_PER_PAGE = 50
+    #     self.current_search_results = []
+    #     self.current_search_page = 0
+
+    #     # --- Background Worker ---
+    #     self.worker = None
+    #     self.progress = None
+        
+    #     # --- File System Watcher ---
+    #     self.file_watcher = QFileSystemWatcher(self)
+    #     self.file_watcher.directoryChanged.connect(self.on_directory_changed)
+    #     self.file_watcher.fileChanged.connect(self.on_file_changed)
+    #     self.reindex_timer = QTimer(self)
+    #     self.reindex_timer.setSingleShot(True)
+    #     self.reindex_timer.timeout.connect(lambda: self.run_task(self._task_rebuild_file_index, on_success=self.on_index_rebuilt))
+        
+    #     # --- Initialization Sequence ---
+    #     self.setup_styles()
+    #     self.setAcceptDrops(True)
+    #     self.init_ui()
+        
+    #     # This can now be called safely as all path attributes are defined.
+    #     self._ensure_config_files_exist() 
+        
+    #     self.reload_configuration()
+    #     self.check_gpu_availability()
+    #     self.logger.info("Application Started.")
+    
+# --- In the ParaFileManager class, REPLACE the __init__ method ---
+
     def __init__(self, logger):
         super().__init__()
         self.logger = logger
@@ -922,7 +1982,7 @@ class ParaFileManager(QMainWindow):
         self.scan_rules = {}
         self.move_to_history = []
         
-        # --- Persistent User Data Paths (Defined Early) ---
+        # --- Persistent User Data Paths (Defined Early and Correctly) ---
         self.config_path = get_user_data_path("config.json")
         self.rules_path = get_user_data_path("rules.json")
         self.scan_rules_path = get_user_data_path("scan_rules.json")
@@ -1559,20 +2619,20 @@ class ParaFileManager(QMainWindow):
             
 
 
-    def _load_scan_rules(self):
-        """Loads the developer-aware scan exclusion rules from JSON."""
-        try:
-            with open(resource_path("scan_rules.json"), "r", encoding="utf-8") as f:
-                self.scan_rules = json.load(f)
-            self.logger.info("Successfully loaded developer-aware scan rules.")
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            self.logger.warn(f"scan_rules.json not found or invalid. Scan may include dev files. Error: {e}")
-            self.scan_rules = {
-                "excluded_dir_names": [],
-                "excluded_dir_paths_contain": [],
-                "excluded_extensions": [],
-                "excluded_filenames": []
-            }
+    # def _load_scan_rules(self):
+    #     """Loads the developer-aware scan exclusion rules from JSON."""
+    #     try:
+    #         with open(resource_path("scan_rules.json"), "r", encoding="utf-8") as f:
+    #             self.scan_rules = json.load(f)
+    #         self.logger.info("Successfully loaded developer-aware scan rules.")
+    #     except (FileNotFoundError, json.JSONDecodeError) as e:
+    #         self.logger.warn(f"scan_rules.json not found or invalid. Scan may include dev files. Error: {e}")
+    #         self.scan_rules = {
+    #             "excluded_dir_names": [],
+    #             "excluded_dir_paths_contain": [],
+    #             "excluded_extensions": [],
+    #             "excluded_filenames": []
+    #         }
               
     #
 
@@ -1605,6 +2665,10 @@ class ParaFileManager(QMainWindow):
 
             os.makedirs(self.base_dir, exist_ok=True)
             self._load_scan_rules()
+            with open(self.rules_path, "r", encoding="utf-8") as f:
+                self.rules = json.load(f)
+
+            # self.operating_mode = config.get("mode", "para")
             self.gpu_hashing_enabled = config.get("gpu_hashing_enabled", False)
             self.move_to_history = config.get("move_to_history", [])
             custom_icons = config.get("custom_icons", {})
@@ -1808,28 +2872,51 @@ class ParaFileManager(QMainWindow):
 # --- In ParaFileManager, ADD this new method ---
 
     def _ensure_config_files_exist(self):
-        """Checks for essential config files in the user data path and creates them if they don't exist."""
-        # config.json is created by the settings dialog, but rules files need defaults.
+        """Checks for essential config files and creates them with defaults if they don't exist."""
+        # This now correctly creates files in the persistent user data directory.
         
-        # Default automation rules
+        if not os.path.exists(self.config_path):
+             with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump({"base_directory": ""}, f, indent=4)
+
         if not os.path.exists(self.rules_path):
             self.logger.info(f"rules.json not found. Creating default file at {self.rules_path}")
-            default_rules = []
             with open(self.rules_path, 'w', encoding='utf-8') as f:
-                json.dump(default_rules, f, indent=4)
+                json.dump([], f, indent=4)
 
-        # Default developer-aware scan rules
         if not os.path.exists(self.scan_rules_path):
             self.logger.info(f"scan_rules.json not found. Creating default file at {self.scan_rules_path}")
             default_scan_rules = {
-              "info": "Configuration for the Developer-Aware Smart Scan. You can add your own rules here.",
-              "excluded_dir_names": [".git",".svn",".hg",".idea",".vscode","__pycache__","node_modules","vendor","venv",".venv","env",".env","target","build","dist","bin","obj"],
-              "excluded_dir_paths_contain": ["site-packages","dist-packages","nltk_data",".cache/huggingface",".cache/torch","model_cache"],
-              "excluded_extensions": [".log",".tmp",".bak",".swp",".lock",".pyc",".o",".so",".class",".jar",".dll"],
-              "excluded_filenames": ["python.exe","pythonw.exe","pip.exe","pip3.exe","activate","activate.ps1","activate.bat","deactivate.bat","manage.py","package.json","package-lock.json","yarn.lock","pnpm-lock.yaml","webpack.config.js","vite.config.js","tsconfig.json","dockerfile","docker-compose.yml","readme.md"]
+              "info": "Default rules for the Developer-Aware Smart Scan.",
+              "excluded_dir_names": [".git", ".idea", ".vscode", "__pycache__", "node_modules", "venv", ".venv", "build", "dist"],
+              "excluded_extensions": [".log", ".tmp", ".bak", ".swp", ".pyc"],
+              "excluded_filenames": ["package-lock.json", "yarn.lock"]
             }
             with open(self.scan_rules_path, 'w', encoding='utf-8') as f:
                 json.dump(default_scan_rules, f, indent=4)
+    # def _ensure_config_files_exist(self):
+    #     """Checks for essential config files in the user data path and creates them if they don't exist."""
+    #     # config.json is created by the settings dialog, but rules files need defaults.
+        
+    #     # Default automation rules
+    #     if not os.path.exists(self.rules_path):
+    #         self.logger.info(f"rules.json not found. Creating default file at {self.rules_path}")
+    #         default_rules = []
+    #         with open(self.rules_path, 'w', encoding='utf-8') as f:
+    #             json.dump(default_rules, f, indent=4)
+
+    #     # Default developer-aware scan rules
+    #     if not os.path.exists(self.scan_rules_path):
+    #         self.logger.info(f"scan_rules.json not found. Creating default file at {self.scan_rules_path}")
+    #         default_scan_rules = {
+    #           "info": "Configuration for the Developer-Aware Smart Scan. You can add your own rules here.",
+    #           "excluded_dir_names": [".git",".svn",".hg",".idea",".vscode","__pycache__","node_modules","vendor","venv",".venv","env",".env","target","build","dist","bin","obj"],
+    #           "excluded_dir_paths_contain": ["site-packages","dist-packages","nltk_data",".cache/huggingface",".cache/torch","model_cache"],
+    #           "excluded_extensions": [".log",".tmp",".bak",".swp",".lock",".pyc",".o",".so",".class",".jar",".dll"],
+    #           "excluded_filenames": ["python.exe","pythonw.exe","pip.exe","pip3.exe","activate","activate.ps1","activate.bat","deactivate.bat","manage.py","package.json","package-lock.json","yarn.lock","pnpm-lock.yaml","webpack.config.js","vite.config.js","tsconfig.json","dockerfile","docker-compose.yml","readme.md"]
+    #         }
+    #         with open(self.scan_rules_path, 'w', encoding='utf-8') as f:
+    #             json.dump(default_scan_rules, f, indent=4)
                            
     # def on_index_rebuilt(self, index_data, from_cache=False):
     #     """Callback for when file index is built. Now handles cache saving."""
@@ -1859,6 +2946,74 @@ class ParaFileManager(QMainWindow):
     #         self.bottom_pane.setCurrentWidget(self.tree_view)
             
             
+# --- 在 ParaFileManager 中，替换 _calculate_retention_score 方法 ---
+
+    # def _calculate_retention_score(self, path):
+    #     """
+    #     Calculates a retention score for a file path.
+    #     VERSION 3: Now with "Developer Context Awareness".
+    #     """
+    #     score = 100 
+    #     reasons = []
+    #     path_lower = path.lower()
+    #     filename = os.path.basename(path_lower)
+    #     name_part, ext = os.path.splitext(filename)
+
+    #     # --- 1. Developer Context Detection ---
+    #     is_dev_env = False
+    #     dev_keywords = ['/venv/', '/.venv/', '/env/', '/.env/', '/site-packages/', '/scripts/']
+    #     if any(key in path_lower for key in dev_keywords):
+    #         is_dev_env = True
+    #         score += 20
+    #         reasons.append("(+20) Developer Environment")
+
+    #     is_model_cache = False
+    #     cache_keywords = ['/model_cache/', '/.cache/huggingface/', '/.cache/torch/']
+    #     if any(key in path_lower for key in cache_keywords):
+    #         is_model_cache = True
+    #         score += 200 # Huge protection score
+    #         reasons.append("(+200) Model Cache File")
+
+    #     # --- 2. Path-Based Scoring ---
+    #     category = self.get_category_from_path(path)
+    #     if category == "Projects": score += 50; reasons.append("(+50) In 'Projects'")
+    #     elif category == "Areas": score += 30; reasons.append("(+30) In 'Areas'")
+    #     elif category == "Archives": score -= 25; reasons.append("(-25) In 'Archives'")
+
+    #     # In non-dev paths, depth is a negative factor.
+    #     if not is_dev_env:
+    #         depth = path.count(os.sep) - self.base_dir.count(os.sep)
+    #         if depth > 5:
+    #             score -= depth * 3; reasons.append(f"(-{depth*3}) Deep path")
+
+    #     # --- 3. Filename-Based Scoring ---
+    #     # Heavily penalize common copy/conflict suffixes
+    #     if re.search(r'(_copy)|(_conflict)|(\(\d+\))|(_duplicate)', name_part):
+    #         score -= 200; reasons.append("(-200) Filename is a copy")
+
+    #     # In a developer environment, apply special rules
+    #     if is_dev_env and ext == '.exe':
+    #         # This directly addresses the pip.exe vs pip3.12.exe problem
+    #         if name_part in ['pip', 'python', 'pythonw']:
+    #             score += 150; reasons.append("(+150) Canonical Executable")
+    #         elif re.search(r'\d', name_part): # Penalize versioned executables if a canonical one exists
+    #             score -= 75; reasons.append("(-75) Versioned Executable")
+        
+    #     # General descriptive name check
+    #     words = re.findall(r'[a-zA-Z]{4,}', name_part)
+    #     if len(words) > 1:
+    #         score += len(words) * 5; reasons.append(f"(+{len(words)*5}) Descriptive name")
+        
+    #     if re.search(r'\d{4}-\d{2}-\d{2}', name_part):
+    #         score += 30; reasons.append("(+30) Has YYYY-MM-DD date")
+
+    #     reason_str = ", ".join(reasons) if reasons else "Standard file"
+    #     return score, reason_str
+    
+
+
+
+
 # --- 在 ParaFileManager 中，替换 _calculate_retention_score 方法 ---
 
     def _calculate_retention_score(self, path):
@@ -2021,7 +3176,174 @@ class ParaFileManager(QMainWindow):
 
 
 
+# # --- In ParaFileManager, REPLACE this method ---
+
+#     def _task_full_deduplication_scan(self, progress_callback):
+#         """
+#         Performs a Developer-Aware Smart Scan with improved progress reporting
+#         for a smoother user experience.
+#         """
+#         if not self.base_dir:
+#             return {}
+        
+#         self.logger.info("Starting Developer-Aware scan...")
+#         all_files_on_disk = get_all_files_in_paths([self.base_dir])
+        
+#         # --- Filtering Logic (Unchanged) ---
+#         excluded_dirs = set(self.scan_rules.get("excluded_dir_names", []))
+#         excluded_path_parts = self.scan_rules.get("excluded_dir_paths_contain", [])
+#         excluded_exts = set(self.scan_rules.get("excluded_extensions", []))
+#         excluded_names = set(self.scan_rules.get("excluded_filenames", []))
+
+#         filtered_files = []
+#         for path in all_files_on_disk:
+#             filename = os.path.basename(path).lower()
+#             ext = os.path.splitext(filename)[1]
+#             path_parts = set(path.lower().split(os.sep))
+            
+#             if filename in excluded_names: continue
+#             if ext in excluded_exts: continue
+#             if not path_parts.isdisjoint(excluded_dirs): continue
+#             if any(part in path.lower() for part in excluded_path_parts): continue
+            
+#             try:
+#                 if os.path.getsize(path) < 4096: continue
+#             except FileNotFoundError:
+#                 continue
+            
+#             filtered_files.append(path)
+        
+#         excluded_count = len(all_files_on_disk) - len(filtered_files)
+#         self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
+
+#         # --- Improved Progress Reporting Logic ---
+#         hashes = {}
+#         # The total number of steps now includes one extra step for finalization.
+#         total_steps = len(filtered_files) + 1
+#         self.logger.info(f"Processing {len(filtered_files)} files using hash cache.")
+
+#         with HashManager(self.hash_cache_db_path) as hm:
+#             for i, file_path in enumerate(filtered_files):
+#                 filename = os.path.basename(file_path)
+#                 # This loop will now bring the progress up to (total-1)/total percent.
+#                 progress_callback(f"Checking: {filename}", i + 1, total_steps)
+                
+#                 try:
+#                     stat = os.stat(file_path)
+#                     current_mtime = stat.st_mtime
+#                     current_size = stat.st_size
+
+#                     file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
+                    
+#                     if not file_hash:
+#                         progress_callback(f"Hashing: {filename}", i + 1, total_steps)
+#                         file_hash = self.get_hash_for_file(file_path, current_size)
+#                         if file_hash:
+#                             hm.update_cache(file_path, current_mtime, current_size, file_hash)
+                    
+#                     if file_hash:
+#                         if file_hash not in hashes: hashes[file_hash] = []
+#                         hashes[file_hash].append(file_path)
+
+#                 except (FileNotFoundError, PermissionError) as e:
+#                     self.logger.warn(f"Could not access or hash {file_path}: {e}")
+#                     continue
+
+#             # This is the final step. It updates the label and completes the progress bar to 100%.
+#             progress_callback("Finalizing and cleaning cache...", total_steps, total_steps)
+#             pruned_count = hm.prune_cache(set(all_files_on_disk))
+#             self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
+        
+#         duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
+#         self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
+#         return duplicate_sets
+
+
 # --- In ParaFileManager, REPLACE this method ---
+
+    # def _task_full_deduplication_scan(self, progress_callback):
+    #     """
+    #     Performs a Developer-Aware Smart Scan with improved progress reporting
+    #     for a smoother user experience.
+    #     """
+    #     if not self.base_dir:
+    #         return {}
+        
+    #     self.logger.info("Starting Developer-Aware scan...")
+    #     all_files_on_disk = get_all_files_in_paths([self.base_dir])
+        
+    #     # --- Filtering Logic ---
+    #     excluded_dirs = set(self.scan_rules.get("excluded_dir_names", []))
+    #     excluded_path_parts = self.scan_rules.get("excluded_dir_paths_contain", [])
+    #     excluded_exts = set(self.scan_rules.get("excluded_extensions", []))
+    #     excluded_names = set(self.scan_rules.get("excluded_filenames", []))
+
+    #     filtered_files = []
+    #     for path in all_files_on_disk:
+    #         filename = os.path.basename(path).lower()
+    #         ext = os.path.splitext(filename)[1]
+    #         path_parts = set(path.lower().split(os.sep))
+            
+    #         if filename in excluded_names: continue
+    #         if ext in excluded_exts: continue
+    #         if not path_parts.isdisjoint(excluded_dirs): continue
+    #         if any(part in path.lower() for part in excluded_path_parts): continue
+            
+    #         try:
+    #             if os.path.getsize(path) < 4096: continue
+    #         except FileNotFoundError:
+    #             continue
+            
+    #         filtered_files.append(path)
+        
+    #     excluded_count = len(all_files_on_disk) - len(filtered_files)
+    #     self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
+
+    #     # --- Cache-Aware Hashing and Pruning Logic ---
+    #     hashes = {}
+    #     total_steps = len(filtered_files) + 1
+    #     self.logger.info(f"Processing {len(filtered_files)} files using hash cache.")
+
+    #     # The 'with' statement ensures the database connection is properly managed.
+    #     # THIS IS THE FIX: The HashManager requires the logger as the second argument.
+    #     with HashManager(self.hash_cache_db_path, self.logger) as hm:
+    #         for i, file_path in enumerate(filtered_files):
+    #             filename = os.path.basename(file_path)
+    #             progress_callback(f"Checking: {filename}", i + 1, total_steps)
+                
+    #             try:
+    #                 stat = os.stat(file_path)
+    #                 current_mtime = stat.st_mtime
+    #                 current_size = stat.st_size
+
+    #                 file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
+                    
+    #                 if not file_hash:
+    #                     progress_callback(f"Hashing: {filename}", i + 1, total_steps)
+    #                     file_hash = self.get_hash_for_file(file_path, current_size)
+    #                     if file_hash:
+    #                         hm.update_cache(file_path, current_mtime, current_size, file_hash)
+                    
+    #                 if file_hash:
+    #                     if file_hash not in hashes: hashes[file_hash] = []
+    #                     hashes[file_hash].append(file_path)
+
+    #             except (FileNotFoundError, PermissionError) as e:
+    #                 self.logger.warn(f"Could not access or hash {file_path}: {e}")
+    #                 continue
+
+    #         # This is the final step, completing the progress bar to 100%.
+    #         progress_callback("Finalizing and cleaning cache...", total_steps, total_steps)
+    #         pruned_count = hm.prune_cache(set(all_files_on_disk))
+    #         self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
+        
+    #     duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
+    #     self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
+    #     return duplicate_sets
+    
+    
+
+
 
     def _task_full_deduplication_scan(self, progress_callback):
         """
@@ -2034,7 +3356,7 @@ class ParaFileManager(QMainWindow):
         self.logger.info("Starting Developer-Aware scan...")
         all_files_on_disk = get_all_files_in_paths([self.base_dir])
         
-        # --- Filtering Logic (Unchanged) ---
+        # --- Filtering Logic (NEW) ---
         excluded_dirs = set(self.scan_rules.get("excluded_dir_names", []))
         excluded_path_parts = self.scan_rules.get("excluded_dir_paths_contain", [])
         excluded_exts = set(self.scan_rules.get("excluded_extensions", []))
@@ -2052,6 +3374,7 @@ class ParaFileManager(QMainWindow):
             if any(part in path.lower() for part in excluded_path_parts): continue
             
             try:
+                # Also exclude very small files from hashing
                 if os.path.getsize(path) < 4096: continue
             except FileNotFoundError:
                 continue
@@ -2061,23 +3384,20 @@ class ParaFileManager(QMainWindow):
         excluded_count = len(all_files_on_disk) - len(filtered_files)
         self.logger.info(f"Scan filtering complete. Excluded {excluded_count} development/system files.")
 
-        # --- Improved Progress Reporting Logic ---
+        # --- Hashing Logic ---
         hashes = {}
-        # The total number of steps now includes one extra step for finalization.
         total_steps = len(filtered_files) + 1
         self.logger.info(f"Processing {len(filtered_files)} files using hash cache.")
 
-        with HashManager(self.hash_cache_db_path) as hm:
+        with HashManager(self.hash_cache_db_path, self.logger) as hm:
             for i, file_path in enumerate(filtered_files):
                 filename = os.path.basename(file_path)
-                # This loop will now bring the progress up to (total-1)/total percent.
                 progress_callback(f"Checking: {filename}", i + 1, total_steps)
                 
                 try:
                     stat = os.stat(file_path)
                     current_mtime = stat.st_mtime
                     current_size = stat.st_size
-
                     file_hash = hm.get_cached_hash(file_path, current_mtime, current_size)
                     
                     if not file_hash:
@@ -2089,12 +3409,10 @@ class ParaFileManager(QMainWindow):
                     if file_hash:
                         if file_hash not in hashes: hashes[file_hash] = []
                         hashes[file_hash].append(file_path)
-
                 except (FileNotFoundError, PermissionError) as e:
                     self.logger.warn(f"Could not access or hash {file_path}: {e}")
                     continue
 
-            # This is the final step. It updates the label and completes the progress bar to 100%.
             progress_callback("Finalizing and cleaning cache...", total_steps, total_steps)
             pruned_count = hm.prune_cache(set(all_files_on_disk))
             self.logger.info(f"Cache pruning complete. Pruned {pruned_count} stale entries.")
@@ -2102,9 +3420,6 @@ class ParaFileManager(QMainWindow):
         duplicate_sets = {h: p for h, p in hashes.items() if len(p) > 1}
         self.logger.info(f"Intelligent scan complete. Found {len(duplicate_sets)} set(s) of duplicate files.")
         return duplicate_sets
-
-
-
 
 
     def _task_move_multiple_items(self, progress_callback, source_paths, destination_dir):
@@ -3321,6 +4636,32 @@ class ParaFileManager(QMainWindow):
                 self.logger.warn(f"Could not remove source directory {folder}: {e}")
 
         return "Hybrid move complete."
+    
+    # --- In ParaFileManager, ADD this new method ---
+
+    def _ensure_config_files_exist(self):
+        """Checks for essential config files in the user data path and creates them if they don't exist."""
+        # config.json is created by the settings dialog, but rules files need defaults.
+        
+        # Default automation rules
+        if not os.path.exists(self.rules_path):
+            self.logger.info(f"rules.json not found. Creating default file at {self.rules_path}")
+            default_rules = []
+            with open(self.rules_path, 'w', encoding='utf-8') as f:
+                json.dump(default_rules, f, indent=4)
+
+        # Default developer-aware scan rules
+        if not os.path.exists(self.scan_rules_path):
+            self.logger.info(f"scan_rules.json not found. Creating default file at {self.scan_rules_path}")
+            default_scan_rules = {
+              "info": "Configuration for the Developer-Aware Smart Scan. You can add your own rules here.",
+              "excluded_dir_names": [".git",".svn",".hg",".idea",".vscode","__pycache__","node_modules","vendor","venv",".venv","env",".env","target","build","dist","bin","obj"],
+              "excluded_dir_paths_contain": ["site-packages","dist-packages","nltk_data",".cache/huggingface",".cache/torch","model_cache"],
+              "excluded_extensions": [".log",".tmp",".bak",".swp",".lock",".pyc",".o",".so",".class",".jar",".dll"],
+              "excluded_filenames": ["python.exe","pythonw.exe","pip.exe","pip3.exe","activate","activate.ps1","activate.bat","deactivate.bat","manage.py","package.json","package-lock.json","yarn.lock","pnpm-lock.yaml","webpack.config.js","vite.config.js","tsconfig.json","dockerfile","docker-compose.yml","readme.md"]
+            }
+            with open(self.scan_rules_path, 'w', encoding='utf-8') as f:
+                json.dump(default_scan_rules, f, indent=4)
 
 
 # --- In ParaFileManager, REPLACE the _task_process_scan_results method ---
@@ -3445,6 +4786,88 @@ class ParaFileManager(QMainWindow):
 
 # --- 在 ParaFileManager 类中, 替换 on_full_scan_completed 方法 ---
 
+    # def on_full_scan_completed(self, duplicate_sets):
+    #     """
+    #     Callback for when the full scan finishes.
+    #     ALGORITHM UPGRADE: Pre-processes the raw data into a rich structure for the analytics dialog.
+    #     """
+    #     if self.progress:
+    #         self.progress.close()
+
+    #     if not duplicate_sets:
+    #         QMessageBox.information(self, "扫描完成", "在您的PARA结构中未找到重复文件。")
+    #         self._enable_watcher() # 确保在没有结果时也重新启用监视器
+    #         return
+        
+    #     # --- Advanced Algorithm: Data Pre-processing ---
+    #     self.logger.info("Scan found duplicates. Pre-processing results for analytics dialog...")
+    #     processed_sets = []
+    #     for hash_val, paths in duplicate_sets.items():
+    #         if not paths: continue
+            
+    #         try:
+    #             # 1. Calculate group-level metrics
+    #             file_size_bytes = os.path.getsize(paths[0])
+    #             count = len(paths)
+    #             total_space_bytes = file_size_bytes * count
+    #             potential_savings_bytes = file_size_bytes * (count - 1)
+
+    #             # 2. Score and sort individual files within the group
+    #             scored_files = []
+    #             for path in paths:
+    #                 try:
+    #                     score, reason = self._calculate_retention_score(path)
+    #                     mod_time = os.path.getmtime(path)
+    #                     scored_files.append({"path": path, "score": score, "reason": reason, "mtime": mod_time})
+    #                 except FileNotFoundError:
+    #                     continue
+                
+    #             if not scored_files: continue
+
+    #             scored_files.sort(key=lambda x: (x["score"], x["mtime"]), reverse=True)
+
+    #             # 3. Assemble the rich data object for this group
+    #             processed_sets.append({
+    #                 "hash": hash_val,
+    #                 "files": scored_files,
+    #                 "count": count,
+    #                 "file_size_bytes": file_size_bytes,
+    #                 "total_space_bytes": total_space_bytes,
+    #                 "potential_savings_bytes": potential_savings_bytes
+    #             })
+
+    #         except (FileNotFoundError, IndexError):
+    #             self.logger.warn(f"Could not process duplicate set for hash {hash_val[:10]}... Files might have been deleted during scan.")
+    #             continue
+
+    #     # 4. Sort the entire list of groups by potential savings by default
+    #     processed_sets.sort(key=lambda x: x["potential_savings_bytes"], reverse=True)
+    #     self.logger.info(f"Pre-processing complete. Passing {len(processed_sets)} processed groups to dialog.")
+
+    #     # --- End of Algorithm ---
+
+    #     # Pass the pre-processed, rich data to the dialog
+    #     dialog = FullScanResultDialog(processed_sets, self)
+    #     if dialog.exec():
+    #         files_to_trash = dialog.get_files_to_trash()
+    #         if files_to_trash:
+    #             self._disable_watcher()
+    #             self.run_task(
+    #                 self._task_process_scan_results,
+    #                 on_success=self.on_final_refresh_finished,
+    #                 files_to_trash=files_to_trash
+    #             )
+    #         else:
+    #             self.log_and_show("No action was performed.", "info")
+    #             self._enable_watcher() # Re-enable if user confirms with no actions
+    #     else:
+    #         # User cancelled the main dialog
+    #         self.log_and_show("Cleanup operation cancelled.", "warn")
+    #         self._enable_watcher()
+    
+
+
+
     def on_full_scan_completed(self, duplicate_sets):
         """
         Callback for when the full scan finishes.
@@ -3483,6 +4906,7 @@ class ParaFileManager(QMainWindow):
                 
                 if not scored_files: continue
 
+                # Sort by score (desc), then modification time (desc) as a tie-breaker
                 scored_files.sort(key=lambda x: (x["score"], x["mtime"]), reverse=True)
 
                 # 3. Assemble the rich data object for this group
@@ -3629,51 +5053,88 @@ class ParaFileManager(QMainWindow):
             except (OSError, PermissionError) as e:
                 self.logger.warn(f"Could not remove directory {path}: {e}")
 
-    def _save_config(self):
-        """Saves the current configuration (including history) back to config.json."""
+
+
+    def _load_scan_rules(self):
+        """Loads the scan exclusion rules from the user data directory."""
         try:
-            # Read the whole config first to not lose other settings
-            with open(resource_path("config.json"), "r") as f_read:
+            with open(self.scan_rules_path, "r", encoding="utf-8") as f:
+                self.scan_rules = json.load(f)
+            self.logger.info("Successfully loaded developer-aware scan rules.")
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            self.logger.warn(f"scan_rules.json not found or invalid. Using empty rules. Error: {e}")
+            self.scan_rules = {} # Default to empty rules on error
+
+    def _save_config(self):
+        """Saves the current configuration back to the persistent config.json."""
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f_read:
                 config = json.load(f_read)
         except (FileNotFoundError, json.JSONDecodeError):
-            config = {} # Or create a default one
+            config = {}
         
-        # Update the history key
         config["move_to_history"] = self.move_to_history
+        # Add any other settings that need to be saved here
         
-        # Write the updated config back to the file
-        with open(resource_path("config.json"), "w") as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
+            
+            
+    # def _save_config(self):
+    #     """Saves the current configuration (including history) back to config.json."""
+    #     try:
+    #         # Read the whole config first to not lose other settings
+    #         with open(resource_path("config.json"), "r") as f_read:
+    #             config = json.load(f_read)
+    #     except (FileNotFoundError, json.JSONDecodeError):
+    #         config = {} # Or create a default one
+        
+    #     # Update the history key
+    #     config["move_to_history"] = self.move_to_history
+        
+    #     # Write the updated config back to the file
+    #     with open(resource_path("config.json"), "w") as f:
+    #         json.dump(config, f, indent=4)
             
 
 # --- EXECUTION BLOCK ---
+# --- REPLACE THE ENTIRE EXECUTION BLOCK AT THE END OF THE FILE ---
+
 if __name__ == "__main__":
+    # Ensure a QApplication instance exists before doing anything else
     app = QApplication(sys.argv)
+    
     try:
-
-
-        main_logger = Logger(filename=get_user_data_path("para_manager.log"))
+        # The logger now correctly writes to the persistent user data directory
+        log_path = get_user_data_path("para_manager.log")
+        main_logger = Logger(filename=log_path)
+        
         window = ParaFileManager(main_logger)
         
-        # main_logger = Logger()
-        # window = ParaFileManager(main_logger)
+        # The global hook now knows where to write the crash report
         sys.excepthook = partial(global_exception_hook, window=window)
+        
         try:
+            # `resource_path` is still correctly used for bundled, read-only assets
             window.setWindowIcon(QIcon(resource_path('icon.ico')))
         except Exception as e:
             main_logger.warn(f"Could not load application icon: {e}")
+            
         window.show()
         sys.exit(app.exec())
+        
     except Exception as e:
-        # This is a fallback for errors during the earliest startup phase
+        # Fallback crash handler in case the main logger fails
         print(f"A fatal error occurred during application startup: {e}")
         traceback.print_exc()
         try:
-            with open("crash_report.log", "a", encoding="utf-8") as f:
-                f.write(f"\n--- CRASH AT {datetime.now()} ---\n")
+            # Attempt to write the crash report to the user data directory
+            crash_log_path = get_user_data_path("crash_report.log")
+            with open(crash_log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n--- STARTUP CRASH AT {datetime.now()} ---\n")
                 traceback.print_exc(file=f)
-        except:
-            pass
+        except Exception as log_e:
+            print(f"Additionally, could not write to crash_report.log: {log_e}")
         
 
 
