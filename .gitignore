@@ -1,6 +1,5 @@
 venv
 build
-dist
 *.egg-info
 *.pyc
 *.pyo
